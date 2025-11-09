@@ -4,19 +4,27 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.githow.links.data.dao.PersonDao
 import com.githow.links.data.dao.TransactionDao
-import com.githow.links.data.entity.Transaction
+import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
 import com.githow.links.data.entity.ShiftAssignment
+import com.githow.links.data.entity.Transaction
 
 @Database(
-    entities = [Transaction::class, Shift::class, ShiftAssignment::class],
-    version = 1,
+    entities = [
+        Transaction::class,
+        Shift::class,
+        ShiftAssignment::class,
+        Person::class  // NEW
+    ],
+    version = 2,  // Increment version
     exportSchema = false
 )
 abstract class LinksDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
+    abstract fun personDao(): PersonDao  // NEW
 
     companion object {
         @Volatile
@@ -29,7 +37,7 @@ abstract class LinksDatabase : RoomDatabase() {
                     LinksDatabase::class.java,
                     "links_database"
                 )
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration()  // For development - recreates DB on version change
                     .build()
                 INSTANCE = instance
                 instance

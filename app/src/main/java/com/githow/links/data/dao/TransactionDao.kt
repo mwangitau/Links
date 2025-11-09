@@ -4,66 +4,194 @@ import androidx.lifecycle.LiveData
 import androidx.room.*
 import com.githow.links.data.entity.Transaction
 import com.githow.links.data.entity.Shift
-import com.githow.links.data.entity.ShiftAssignment
 
 @Dao
 interface TransactionDao {
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    // ============ BASIC OPERATIONS ============
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: Transaction): Long
 
-    @Query("SELECT * FROM transactions WHERE status = 'pending' ORDER BY timestamp DESC")
-    fun getPendingTransactions(): LiveData<List<Transaction>>
+    @Update
+    suspend fun updateTransaction(transaction: Transaction)
 
-    @Query("SELECT * FROM transactions WHERE shift_id = :shiftId ORDER BY timestamp DESC")
+    @Delete
+    suspend fun deleteTransaction(transaction: Transaction)
+
+    // ============ GENERAL QUERIES ============
+
+    // Get all transactions (visible only - excluding hidden)
+    @Query("SELECT * FROM transactions WHERE is_hidden = 0 ORDER BY timestamp DESC")
+    fun getAllTransactionsLive(): LiveData<List<Transaction>>
+
+    // Get all transactions including hidden
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
+    suspend fun getAllTransactions(): List<Transaction>
+
+    // Get transaction by M-PESA code
+    @Query("SELECT * FROM transactions WHERE mpesa_code = :code LIMIT 1")
+    suspend fun getTransactionByCode(code: String): Transaction?
+
+    // Search transactions (visible only)
+    @Query("""
+        SELECT * FROM transactions 
+        WHERE is_hidden = 0 
+          AND (sender_name LIKE :query 
+           OR sender_phone LIKE :query 
+           OR business_name LIKE :query
+           OR mpesa_code LIKE :query)
+        ORDER BY timestamp DESC
+    """)
+    fun searchTransactions(query: String): LiveData<List<Transaction>>
+
+    // Get transactions by date
+    @Query("SELECT * FROM transactions WHERE is_hidden = 0 AND date_received = :date ORDER BY timestamp DESC")
+    fun getTransactionsByDate(date: String): LiveData<List<Transaction>>
+
+    // Get total by date
+    @Query("SELECT SUM(amount) FROM transactions WHERE is_hidden = 0 AND date_received = :date AND transaction_type = 'RECEIVED'")
+    suspend fun getTotalByDate(date: String): Double?
+
+    // ============ SHIFT-SPECIFIC QUERIES ============
+
+    // Get transactions for a specific shift (visible only)
+    @Query("SELECT * FROM transactions WHERE is_hidden = 0 AND shift_id = :shiftId ORDER BY timestamp DESC")
     fun getTransactionsByShift(shiftId: Long): LiveData<List<Transaction>>
 
-    @Query("SELECT * FROM transactions WHERE mpesa_code = :mpesaCode LIMIT 1")
-    suspend fun getTransactionByCode(mpesaCode: String): Transaction?
+    // Get unassigned transactions in current shift (no person assigned)
+    @Query("""
+        SELECT * FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND (assigned_to IS NULL OR assigned_to = '')
+          AND transaction_type = 'RECEIVED'
+        ORDER BY timestamp DESC
+    """)
+    fun getUnassignedTransactionsByShift(shiftId: Long): LiveData<List<Transaction>>
 
-    @Query("UPDATE transactions SET assigned_to = :personName, shift_id = :shiftId WHERE id = :transactionId")
-    suspend fun assignTransaction(transactionId: Long, personName: String, shiftId: Long)
+    // Get assigned transactions for a person in a shift
+    @Query("""
+        SELECT * FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND assigned_to = :personName
+        ORDER BY timestamp DESC
+    """)
+    fun getTransactionsByShiftAndPerson(shiftId: Long, personName: String): LiveData<List<Transaction>>
 
-    @Query("UPDATE transactions SET status = 'synced', synced_at = :syncedAt WHERE id IN (:transactionIds)")
-    suspend fun markAsSynced(transactionIds: List<Long>, syncedAt: Long)
+    // Get total amount assigned to a person in a shift
+    @Query("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND assigned_to = :personName
+    """)
+    suspend fun getTotalByShiftAndPerson(shiftId: Long, personName: String): Double?
 
-    @Query("SELECT * FROM transactions WHERE status = 'pending'")
-    suspend fun getUnsyncedTransactions(): List<Transaction>
+    // Get transactions by category in a shift
+    @Query("""
+        SELECT * FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND transaction_category = :category
+        ORDER BY timestamp DESC
+    """)
+    fun getTransactionsByShiftAndCategory(shiftId: Long, category: String): LiveData<List<Transaction>>
 
-    @Insert
+    // Get total by category in a shift
+    @Query("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND transaction_category = :category
+    """)
+    suspend fun getTotalByShiftAndCategory(shiftId: Long, category: String): Double?
+
+    // Get all TRANSFER transactions in a shift (for reconciliation)
+    @Query("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND (transaction_type = 'SENT' OR transaction_category = 'TRANSFER')
+    """)
+    suspend fun getTotalTransfersByShift(shiftId: Long): Double?
+
+    // Get all WITHDRAWAL transactions in a shift
+    @Query("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE is_hidden = 0 
+          AND shift_id = :shiftId 
+          AND transaction_category = 'WITHDRAWAL'
+    """)
+    suspend fun getTotalWithdrawalsByShift(shiftId: Long): Double?
+
+    // Assign transaction to person
+    @Query("""
+        UPDATE transactions 
+        SET assigned_to = :personName, 
+            transaction_category = :category,
+            status = 'assigned'
+        WHERE id = :transactionId
+    """)
+    suspend fun assignTransaction(transactionId: Long, personName: String, category: String)
+
+    // Unassign transaction
+    @Query("""
+        UPDATE transactions 
+        SET assigned_to = NULL, 
+            transaction_category = NULL,
+            status = 'pending'
+        WHERE id = :transactionId
+    """)
+    suspend fun unassignTransaction(transactionId: Long)
+
+    // ============ SHIFT MANAGEMENT ============
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertShift(shift: Shift): Long
 
-    @Query("SELECT * FROM shifts WHERE status = 'open' LIMIT 1")
+    @Update
+    suspend fun updateShift(shift: Shift)
+
+    // Get currently active shift
+    @Query("SELECT * FROM shifts WHERE status = 'ACTIVE' LIMIT 1")
     suspend fun getOpenShift(): Shift?
 
-    @Query("SELECT * FROM shifts WHERE status = 'open' LIMIT 1")
+    @Query("SELECT * FROM shifts WHERE status = 'ACTIVE' LIMIT 1")
     fun getOpenShiftLive(): LiveData<Shift?>
 
+    // Get all shifts
     @Query("SELECT * FROM shifts ORDER BY start_time DESC")
     fun getAllShifts(): LiveData<List<Shift>>
 
-    @Query("UPDATE shifts SET status = 'closed', end_time = :endTime WHERE shift_id = :shiftId")
-    suspend fun closeShift(shiftId: Long, endTime: Long)
+    // Get shift by ID
+    @Query("SELECT * FROM shifts WHERE shift_id = :id")
+    suspend fun getShiftById(id: Long): Shift?
 
-    @Insert
-    suspend fun insertShiftAssignment(assignment: ShiftAssignment)
+    @Query("SELECT * FROM shifts WHERE shift_id = :id")
+    fun getShiftByIdLive(id: Long): LiveData<Shift?>
 
-    @Query("SELECT * FROM shift_assignments WHERE shift_id = :shiftId")
-    fun getShiftAssignments(shiftId: Long): LiveData<List<ShiftAssignment>>
+    // Get closed shifts
+    @Query("SELECT * FROM shifts WHERE status = 'CLOSED' ORDER BY start_time DESC")
+    fun getClosedShifts(): LiveData<List<Shift>>
 
-    @Query("SELECT * FROM shift_assignments WHERE shift_id = :shiftId")
-    suspend fun getShiftAssignmentsList(shiftId: Long): List<ShiftAssignment>
-
+    // Close shift
     @Query("""
-        SELECT assigned_to, SUM(amount) as total
-        FROM transactions 
-        WHERE shift_id = :shiftId AND assigned_to IS NOT NULL
-        GROUP BY assigned_to
+        UPDATE shifts 
+        SET status = 'CLOSED',
+            end_time = :endTime,
+            close_balance = :closeBalance,
+            updated_at = :timestamp
+        WHERE shift_id = :shiftId
     """)
-    fun getShiftTotals(shiftId: Long): LiveData<List<ShiftTotal>>
-}
+    suspend fun closeShift(shiftId: Long, endTime: Long, closeBalance: Double, timestamp: Long = System.currentTimeMillis())
 
-data class ShiftTotal(
-    val assigned_to: String,
-    val total: Double
-)
+    // ============ STATISTICS ============
+
+    @Query("SELECT COUNT(*) FROM transactions WHERE is_hidden = 0")
+    suspend fun getTransactionCount(): Int
+
+    @Query("SELECT SUM(amount) FROM transactions WHERE is_hidden = 0 AND transaction_type = 'RECEIVED'")
+    suspend fun getTotalReceived(): Double?
+}

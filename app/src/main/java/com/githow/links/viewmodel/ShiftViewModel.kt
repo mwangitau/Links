@@ -9,16 +9,30 @@ import com.githow.links.data.database.LinksDatabase
 import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
 import com.githow.links.data.entity.Transaction
+import com.githow.links.sync.CloudSyncManager
+import com.githow.links.sync.SyncResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = LinksDatabase.getDatabase(application)
     private val transactionDao = database.transactionDao()
     private val personDao = database.personDao()
+    private val shiftDao = database.shiftDao()  // ADDED: New ShiftDao
+
+    // Cloud sync manager
+    private val cloudSyncManager = CloudSyncManager(application)
 
     // Current active shift
     val currentShift: LiveData<Shift?> = transactionDao.getOpenShiftLive()
+
+    // ADDED: Alternative current active shift (for new screens)
+    val currentActiveShift: LiveData<Shift?> = shiftDao.getActiveShift()
+
+    // ADDED: Current shift transactions (for new screens)
+    val currentShiftTransactions: LiveData<List<Transaction>> = transactionDao.getCurrentShiftTransactions()
 
     // Closed shifts history
     val closedShifts: LiveData<List<Shift>> = transactionDao.getClosedShifts()
@@ -37,6 +51,10 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     private val _errorMessage = MutableLiveData<String?>()
     val errorMessage: LiveData<String?> = _errorMessage
 
+    // Cloud sync status
+    private val _syncStatus = MutableLiveData<String?>()
+    val syncStatus: LiveData<String?> = _syncStatus
+
     init {
         // Load transactions when shift changes
         currentShift.observeForever { shift ->
@@ -46,11 +64,264 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============ SHIFT OPERATIONS ============
+    // ============ NEW METHODS FOR OPEN/CLOSE SHIFT SCREENS ============
 
     /**
-     * Open a new shift
-     * FIX #1: Sets open balance from previous shift's closing balance
+     * Get the last closed shift (for opening new shift with its closing balance)
+     */
+    fun getLastClosedShift(): LiveData<Shift?> {
+        return shiftDao.getLastClosedShift()
+    }
+
+    /**
+     * Open a new shift (FOR NEW OPEN SHIFT SCREEN)
+     * This version is simpler and works with the new UI
+     */
+    fun openNewShift(
+        shift: Shift,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // Check if there's already an active shift
+                    val activeShift = shiftDao.getActiveShiftDirect()
+                    if (activeShift != null) {
+                        withContext(Dispatchers.Main) {
+                            onError("There is already an active shift. Please close it first.")
+                        }
+                        return@withContext
+                    }
+
+                    // Insert the new shift
+                    val shiftId = shiftDao.insertShift(shift)
+
+                    // Assign all unassigned transactions to this shift
+                    assignUnassignedTransactionsToShift(shiftId)
+                }
+
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError("Failed to open shift: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Close the current shift with manual closing balance (FOR NEW CLOSE SHIFT SCREEN)
+     */
+    fun closeShift(
+        shiftId: Long,
+        closingBalance: Double,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val shift = shiftDao.getShiftByIdDirect(shiftId)
+
+                    if (shift == null) {
+                        withContext(Dispatchers.Main) {
+                            onError("Shift not found")
+                        }
+                        return@withContext
+                    }
+
+                    if (shift.status == "CLOSED") {
+                        withContext(Dispatchers.Main) {
+                            onError("This shift is already closed")
+                        }
+                        return@withContext
+                    }
+
+                    // Get all transactions for this shift
+                    val transactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+
+                    // Check for unassigned transactions
+                    val unassignedCount = transactions.count { it.assigned_to.isNullOrBlank() }
+                    if (unassignedCount > 0) {
+                        withContext(Dispatchers.Main) {
+                            onError("Cannot close shift with $unassignedCount unassigned transaction(s)")
+                        }
+                        return@withContext
+                    }
+
+                    // Calculate totals using YOUR transaction field names
+                    val totalReceived = transactions
+                        .filter { it.transaction_type == "RECEIVED" }
+                        .sumOf { it.amount }
+
+                    val totalTransfers = transactions
+                        .filter { it.transaction_type == "SENT" }
+                        .sumOf { it.amount }
+
+                    val totalWithdrawals = transactions
+                        .filter { it.transaction_type == "WITHDRAW" }
+                        .sumOf { it.amount }
+
+                    // Calculate expected total: (close_balance + withdrawals) - open_balance
+                    val expectedTotal = (closingBalance + totalWithdrawals) - shift.open_balance
+
+                    // Calculate actual total from CSA assignments
+                    val actualTotal = transactions
+                        .filter { !it.assigned_to.isNullOrBlank() }
+                        .sumOf { it.amount }
+
+                    val difference = expectedTotal - actualTotal
+
+                    // Update shift
+                    val updatedShift = shift.copy(
+                        end_time = System.currentTimeMillis(),
+                        close_balance = closingBalance,
+                        status = "CLOSED",
+                        total_received = totalReceived,
+                        total_transfers = totalTransfers,
+                        total_withdrawals = totalWithdrawals,
+                        expected_total = expectedTotal,
+                        actual_total = actualTotal,
+                        difference = difference,
+                        updated_at = System.currentTimeMillis()
+                    )
+
+                    shiftDao.updateShift(updatedShift)
+
+                    // Cloud sync
+                    withContext(Dispatchers.Main) {
+                        _syncStatus.value = "Syncing to cloud..."
+                    }
+
+                    val syncResult = cloudSyncManager.syncShiftToCloud(
+                        shift = updatedShift,
+                        transactions = transactions
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        when (syncResult) {
+                            is SyncResult.Success -> {
+                                android.util.Log.d("ShiftViewModel", "☁️ ${syncResult.message}")
+                                _syncStatus.value = "✅ Synced to Google Sheets"
+                            }
+                            is SyncResult.Failure -> {
+                                android.util.Log.e("ShiftViewModel", "☁️ Sync failed: ${syncResult.error}")
+                                _syncStatus.value = "⚠️ Sync failed: ${syncResult.error}"
+                            }
+                        }
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError("Failed to close shift: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Update closing balance for an already closed shift
+     */
+    fun updateClosingBalance(
+        shiftId: Long,
+        newClosingBalance: Double,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val shift = shiftDao.getShiftByIdDirect(shiftId)
+
+                    if (shift == null) {
+                        withContext(Dispatchers.Main) {
+                            onError("Shift not found")
+                        }
+                        return@withContext
+                    }
+
+                    if (shift.status != "CLOSED") {
+                        withContext(Dispatchers.Main) {
+                            onError("Can only edit closing balance for closed shifts")
+                        }
+                        return@withContext
+                    }
+
+                    // Recalculate with new closing balance
+                    val expectedTotal = (newClosingBalance + shift.total_withdrawals) - shift.open_balance
+                    val difference = expectedTotal - shift.actual_total
+
+                    val updatedShift = shift.copy(
+                        close_balance = newClosingBalance,
+                        expected_total = expectedTotal,
+                        difference = difference,
+                        updated_at = System.currentTimeMillis()
+                    )
+
+                    shiftDao.updateShift(updatedShift)
+                }
+
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError("Failed to update closing balance: ${e.message}")
+                }
+            }
+        }
+    }
+
+    // ============ EXISTING METHODS BELOW (KEEP ALL OF THESE) ============
+
+    /**
+     * Get a specific shift by ID as LiveData
+     * Used by: ShiftReportScreen
+     */
+    fun getShiftByIdLive(shiftId: Long): LiveData<Shift?> {
+        val result = MutableLiveData<Shift?>()
+        viewModelScope.launch {
+            try {
+                result.value = transactionDao.getShiftById(shiftId)
+            } catch (e: Exception) {
+                android.util.Log.e("ShiftViewModel", "Error getting shift by ID", e)
+                result.value = null
+            }
+        }
+        return result
+    }
+
+    /**
+     * Get all transactions for a specific shift as LiveData
+     * Used by: ShiftReportScreen
+     */
+    fun getShiftTransactions(shiftId: Long): LiveData<List<Transaction>> {
+        val result = MutableLiveData<List<Transaction>>()
+        viewModelScope.launch {
+            try {
+                // Get all transactions for this shift
+                val allTransactions = transactionDao.getAllTransactions()
+                val shiftTransactions = allTransactions.filter {
+                    it.shift_id == shiftId && !it.is_hidden
+                }
+                result.value = shiftTransactions
+            } catch (e: Exception) {
+                android.util.Log.e("ShiftViewModel", "Error getting shift transactions", e)
+                result.value = emptyList()
+            }
+        }
+        return result
+    }
+
+    /**
+     * Open a shift (ORIGINAL METHOD - KEEP FOR COMPATIBILITY)
      */
     fun openShift() {
         viewModelScope.launch {
@@ -63,19 +334,22 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // Get previous closed shift for opening balance
-                val allShifts = transactionDao.getAllShifts().value ?: emptyList()
-                val previousShift = allShifts
+                // Get ALL shifts and find the most recent CLOSED shift
+                val allShifts = transactionDao.getAllTransactions()
+                    .mapNotNull { it.shift_id }
+                    .distinct()
+                    .mapNotNull { transactionDao.getShiftById(it) }
                     .filter { it.status == "CLOSED" }
-                    .maxByOrNull { it.end_time ?: 0 }
+                    .sortedByDescending { it.end_time ?: 0 }
+
+                val previousShift = allShifts.firstOrNull()
 
                 val openBalance = if (previousShift != null && previousShift.close_balance != null) {
-                    // Use previous shift's closing balance
-                    android.util.Log.d("ShiftViewModel", "Using previous shift closing balance: ${previousShift.close_balance}")
+                    android.util.Log.d("ShiftViewModel", "✅ Using previous shift closing balance: ${previousShift.close_balance}")
                     previousShift.close_balance!!
                 } else {
-                    // First shift - use most recent transaction balance
                     val recentTransactions = transactionDao.getAllTransactions()
+                        .sortedByDescending { it.timestamp }
                     val balance = recentTransactions.firstOrNull()?.account_balance ?: 0.0
                     android.util.Log.d("ShiftViewModel", "First shift - using recent transaction balance: $balance")
                     balance
@@ -102,15 +376,14 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Close current shift
-     * FIX #4: Prevent closing if unassigned transactions exist
+     * Close current shift (ORIGINAL METHOD - MODIFIED TO USE NEW DAO)
      */
     fun closeShift() {
         viewModelScope.launch {
             try {
                 val shift = transactionDao.getOpenShift() ?: return@launch
 
-                // FIX #4: Check for unassigned transactions
+                // Check for unassigned transactions
                 val unassigned = transactionDao.getAllTransactions()
                     .filter { it.shift_id == shift.shift_id &&
                             it.assigned_to == null &&
@@ -125,23 +398,22 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Get most recent transaction for closing balance
                 val recentTransactions = transactionDao.getAllTransactions()
+                    .sortedByDescending { it.timestamp }
                 val closeBalance = recentTransactions.firstOrNull()?.account_balance ?: shift.open_balance
 
                 // Calculate totals
                 val transfers = transactionDao.getTotalTransfersByShift(shift.shift_id) ?: 0.0
                 val withdrawals = transactionDao.getTotalWithdrawalsByShift(shift.shift_id) ?: 0.0
 
-                // Expected = (close + withdrawals + transfers) - open
                 val expectedTotal = (closeBalance + withdrawals + transfers) - shift.open_balance
 
-                // Actual = sum of all assignments (CSA + Debt Paid)
                 val shiftTransactions = transactionDao.getAllTransactions()
                     .filter { it.shift_id == shift.shift_id && it.assigned_to != null }
                 val actualTotal = shiftTransactions.sumOf { it.amount }
 
                 val difference = expectedTotal - actualTotal
 
-                // Update shift with all totals
+                // Update shift
                 val updatedShift = shift.copy(
                     end_time = System.currentTimeMillis(),
                     close_balance = closeBalance,
@@ -157,11 +429,35 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 transactionDao.updateShift(updatedShift)
                 android.util.Log.d("ShiftViewModel", "✅ Shift closed. Expected: $expectedTotal, Actual: $actualTotal, Diff: $difference")
 
+                // Cloud sync
+                _syncStatus.value = "Syncing to cloud..."
+
+                val syncResult = cloudSyncManager.syncShiftToCloud(
+                    shift = updatedShift,
+                    transactions = shiftTransactions
+                )
+
+                when (syncResult) {
+                    is SyncResult.Success -> {
+                        android.util.Log.d("ShiftViewModel", "☁️ ${syncResult.message}")
+                        _syncStatus.value = "✅ Synced to Google Sheets"
+                    }
+                    is SyncResult.Failure -> {
+                        android.util.Log.e("ShiftViewModel", "☁️ Sync failed: ${syncResult.error}")
+                        _syncStatus.value = "⚠️ Sync failed: ${syncResult.error}"
+                    }
+                }
+
             } catch (e: Exception) {
                 android.util.Log.e("ShiftViewModel", "Error closing shift", e)
                 _errorMessage.value = "Error closing shift: ${e.message}"
             }
         }
+    }
+
+    // Clear sync status
+    fun clearSyncStatus() {
+        _syncStatus.value = null
     }
 
     // Clear error message
@@ -187,8 +483,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             android.util.Log.e("ShiftViewModel", "Error assigning transactions to shift", e)
         }
     }
-
-    // ============ TRANSACTION OPERATIONS ============
 
     /**
      * Load transactions for a shift
@@ -218,7 +512,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     transactionDao.assignTransaction(id, personName, category)
                 }
 
-                // Reload transactions
                 currentShift.value?.let { shift ->
                     loadShiftTransactions(shift.shift_id)
                 }
@@ -232,14 +525,13 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * FIX #3: Reassign a single transaction to different person
+     * Reassign a single transaction to different person
      */
     fun reassignTransaction(transactionId: Long, newPersonName: String, newCategory: String) {
         viewModelScope.launch {
             try {
                 transactionDao.assignTransaction(transactionId, newPersonName, newCategory)
 
-                // Reload transactions
                 currentShift.value?.let { shift ->
                     loadShiftTransactions(shift.shift_id)
                 }
@@ -260,7 +552,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 transactionDao.unassignTransaction(transactionId)
 
-                // Reload transactions
                 currentShift.value?.let { shift ->
                     loadShiftTransactions(shift.shift_id)
                 }
@@ -272,8 +563,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    // ============ PERSON OPERATIONS ============
 
     /**
      * Add a new person
@@ -354,8 +643,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ============ SHIFT REPORT OPERATIONS (FIX #2) ============
-
     /**
      * Get detailed breakdown for a shift
      */
@@ -365,7 +652,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val persons = personDao.getAllPersons().value ?: emptyList()
 
-            // Get totals for each person
             persons.forEach { person ->
                 val total = transactionDao.getTotalByShiftAndPerson(shiftId, person.short_name) ?: 0.0
                 if (total > 0) {
@@ -373,7 +659,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Get debt paid
             val debtPaid = transactionDao.getTotalByShiftAndCategory(shiftId, "DEBT_PAID") ?: 0.0
             if (debtPaid > 0) {
                 breakdown["Debt Paid"] = debtPaid

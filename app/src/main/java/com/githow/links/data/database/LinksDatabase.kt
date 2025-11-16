@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.githow.links.data.dao.PersonDao
+import com.githow.links.data.dao.ShiftDao
 import com.githow.links.data.dao.TransactionDao
 import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
@@ -16,15 +17,16 @@ import com.githow.links.data.entity.Transaction
         Transaction::class,
         Shift::class,
         ShiftAssignment::class,
-        Person::class  // NEW
+        Person::class
     ],
-    version = 2,  // Increment version
+    version = 3,  // Increment version for ShiftDao addition
     exportSchema = false
 )
 abstract class LinksDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
-    abstract fun personDao(): PersonDao  // NEW
+    abstract fun personDao(): PersonDao
+    abstract fun shiftDao(): ShiftDao  // ADDED: Required for shift operations
 
     companion object {
         @Volatile

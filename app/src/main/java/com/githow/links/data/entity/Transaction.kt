@@ -33,6 +33,7 @@ data class Transaction(
     val time_received: String,
     val account_balance: Double,
     val transaction_cost: Double,
+    val sms_body: String? = null,
 
     // Transaction type: RECEIVED, SENT, WITHDRAW
     val transaction_type: String,

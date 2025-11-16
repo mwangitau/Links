@@ -13,9 +13,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.githow.links.ui.screens.*
@@ -85,7 +87,7 @@ fun LINKSApp(
     transactionViewModel: TransactionViewModel,
     shiftViewModel: ShiftViewModel
 ) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var currentScreen by remember { mutableStateOf("main") }
     var selectedShiftId by remember { mutableStateOf<Long?>(null) }
 
@@ -105,6 +107,33 @@ fun LINKSApp(
             )
             return
         }
+        "shift_report" -> {
+            selectedShiftId?.let { shiftId ->
+                ShiftReportScreen(
+                    shiftId = shiftId,
+                    viewModel = shiftViewModel,
+                    onNavigateBack = {
+                        currentScreen = "main"
+                        selectedShiftId = null
+                    }
+                )
+            }
+            return
+        }
+        "open_shift" -> {
+            OpenShiftScreen(
+                viewModel = shiftViewModel,
+                onNavigateBack = { currentScreen = "main" }
+            )
+            return
+        }
+        "close_shift" -> {
+            CloseShiftScreen(
+                viewModel = shiftViewModel,
+                onNavigateBack = { currentScreen = "main" }
+            )
+            return
+        }
     }
 
     // Main screens with bottom navigation
@@ -112,7 +141,7 @@ fun LINKSApp(
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.List, contentDescription = null) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     label = { Text("Transactions") },
                     selected = selectedTab == 0,
                     onClick = {
@@ -137,12 +166,9 @@ fun LINKSApp(
                 0 -> TransactionListScreen(viewModel = transactionViewModel)
                 1 -> ShiftDashboardScreen(
                     viewModel = shiftViewModel,
-                    onNavigateToAssignment = { currentScreen = "assignment" },
-                    onNavigateToPersonManagement = { currentScreen = "persons" },
-                    onNavigateToShiftReport = { shiftId ->
-                        selectedShiftId = shiftId
-                        // TODO: Navigate to shift report when implemented
-                    }
+                    onNavigateToOpenShift = { currentScreen = "open_shift" },
+                    onNavigateToCloseShift = { currentScreen = "close_shift" },
+                    onNavigateToAssignTransactions = { currentScreen = "assignment" }
                 )
             }
         }

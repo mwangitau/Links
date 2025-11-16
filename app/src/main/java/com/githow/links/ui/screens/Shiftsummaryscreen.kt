@@ -25,24 +25,6 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
 
-/**
- * A screen that displays a summary of the current active shift.
- *
- * This screen shows:
- * - The current shift's details.
- * - A summary of opening and closing balances.
- * - A breakdown of transactions assigned to different CSAs (Customer Service Agents).
- * - A list of unassigned transactions.
- * - A detailed review of transactions for each CSA.
- *
- * It also provides dialogs to:
- * - Edit the closing balance.
- * - Reassign all transactions from one CSA to another.
- * - View the transactions for a specific CSA.
- *
- * @param viewModel The [ShiftViewModel] that provides the data for the screen.
- * @param onNavigateBack A lambda to be invoked when the user wants to navigate back.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShiftSummaryScreen(
@@ -67,7 +49,7 @@ fun ShiftSummaryScreen(
 
     val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
 
-    // Calculate summaries for CSA breakdown.
+    // Calculate summaries
     val csaBreakdown = shiftTransactions
         .filter { !it.assigned_to.isNullOrBlank() }
         .groupBy { it.assigned_to }
@@ -309,7 +291,7 @@ fun ShiftSummaryScreen(
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "${unassignedTransactions.size} transaction${if (unassignedTransactions.size != 1) "s" else ""}",
+                                "${unassignedTransactions.size} transaction${if (unassignedTransactions.size != 1) "s" else ""} not assigned to any CSA",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -779,14 +761,6 @@ fun ShiftSummaryScreen(
     }
 }
 
-/**
- * A private composable function to display a row with a label and a value.
- * Used for displaying summary information.
- *
- * @param label The text to display on the left.
- * @param value The text to display on the right.
- * @param valueColor The color of the value text.
- */
 @Composable
 private fun SummaryRow(
     label: String,

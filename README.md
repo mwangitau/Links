@@ -1,84 +1,109 @@
+
 # LINKS – Financial and Shift Management App
 
-## Overview
-LINKS is an Android application built with **Kotlin** and **Jetpack Compose** designed to help small businesses and managers track financial transactions in real time during active work shifts.  
-It automatically parses incoming **SMS payment notifications**, organizes them, and allows managers to assign each transaction to employees or categories.
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Kotlin Version](https://img.shields.io/badge/Kotlin-1.9.0-blue.svg)](https://kotlinlang.org)
+[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-1.6.0-brightgreen.svg)](https://developer.android.com/jetpack/compose)
 
-## Key Features
-- **Automatic SMS Parsing**  
-  Detects and parses mobile money or banking SMS messages, extracting amounts, senders, timestamps, and transaction codes.
+## 🌟 Overview
 
-- **Shift Management**  
-  Create, start, and close work shifts. Only one shift may be active at any time.
+LINKS is a powerful yet intuitive Android application crafted with **Kotlin** and **Jetpack Compose**. It's designed to streamline financial tracking and shift management for small businesses. The app automatically captures and parses incoming SMS payment notifications, with a specific focus on **M-Pesa messages**, providing managers with a real-time overview of financial activities during work shifts. This enables efficient transaction assignment and monitoring, ensuring financial clarity and accountability.
 
-- **Transaction Assignment**  
-  Assign parsed transactions to employees or categories such as “Debt Paid”.
+## ✨ Key Features
 
-- **Real‑Time Monitoring**  
-  View totals of assigned and unassigned transactions with live updates.
+- **🤖 Automatic SMS Parsing**: Intelligently detects and extracts crucial information from mobile money and banking SMS messages, including amounts, sender details, timestamps, and transaction codes. It includes a dedicated `MpesaParser.kt` for high-accuracy parsing of M-Pesa notifications.
+- **🕒 Shift Management**: Seamlessly create, start, and end work shifts using screens like `OpenShiftScreen.kt` and `CloseShiftScreen.kt`. The app ensures that only one shift is active at a time, preventing overlaps and confusion.
+- **💳 Transaction Assignment**: Effortlessly assign parsed transactions to employees or predefined categories. `TransactionAssignmentScreen.kt` provides a dedicated interface for this purpose.
+- **📊 Real-Time Monitoring**: A dynamic dashboard (`ShiftDashboardScreen.kt`) provides a live view of both assigned and unassigned transaction totals, with updates happening in real-time.
+- **👥 Personnel Management**: A comprehensive module (`PersonManagementScreen.kt`) to add, edit, and maintain employee records, ensuring that your team's information is always up-to-date.
+- **🔒 Local Data Storage**: All data is securely stored on the device using the **Room persistence library**. The database schema is defined in `data/entity/` and accessed via DAOs in `data/dao/`. This ensures the app works perfectly offline.
+- **🎨 Modern UI**: A clean, modern, and reactive user interface built entirely with **Jetpack Compose** and **Material 3**. The theme and color palette are defined in `ui/theme/` and `res/values/colors.xml`.
 
-- **Personnel Management**  
-  Add, edit, and maintain records for employees.
+## 📂 Project Structure
 
-- **Local Data Storage with Room**  
-  All data is persisted on‑device, requiring no internet connection.
+The project follows a standard Android architecture pattern, separating concerns for better maintainability.
 
-- **Modern UI with Jetpack Compose**  
-  Clean and reactive UI built entirely with Compose and Material 3.
-
-## Project Structure
 ```
-app/
+app/src/main/java/com/githow/links/
+ │
  ├─ data/
- │   ├─ local/        # Room DB, DAOs, Entities
- │   ├─ repository/   # Repository implementations
- ├─ domain/
- │   ├─ model/        # Core business models
- │   ├─ repository/   # Repository interfaces
- ├─ presentation/
- │   ├─ components/   # Reusable Compose UI components
- │   ├─ screens/      # App screens (Shift, Transactions, Personnel, etc.)
+ │   ├─ dao/              # Data Access Objects for Room (PersonDao, ShiftDao, TransactionDao)
+ │   ├─ database/         # LinksDatabase Room database setup
+ │   └─ entity/           # Room @Entity classes (Person, Shift, Transaction)
+ │
  ├─ receiver/
- │   └─ SmsReceiver.kt    # BroadcastReceiver handling SMS parsing
- ├─ utils/                # Helpers and formatting utilities
+ │   └─ SmsReceiver.kt    # BroadcastReceiver for intercepting and handling incoming SMS.
+ │
+ ├─ sync/
+ │   └─ CloudSyncManager.kt # (In-progress) Manager for handling cloud synchronization logic.
+ │
+ ├─ ui/
+ │   ├─ screens/          # Composable screens for app features (OpenShiftScreen, ShiftDashboardScreen, etc.)
+ │   └─ theme/            # App's theme, colors, and typography (Theme.kt, Color.kt)
+ │
+ ├─ utils/
+ │   └─ MpesaParser.kt    # Utility for parsing M-Pesa SMS transaction messages.
+ │
+ ├─ viewmodel/
+ │   ├─ ShiftViewModel.kt
+ │   └─ TransactionViewModel.kt # ViewModels to hold and manage UI-related data.
+ │
+ └─ MainActivity.kt       # Main entry point of the application.
 ```
 
-## Tech Stack
-- **Kotlin**
-- **Jetpack Compose**
-- **Room Database**
-- **Android Architecture Components**
-- **Gradle Kotlin DSL**
-- **Material 3**
+## 🛠️ Tech Stack
 
-## Permissions
-The application requires:
-- `RECEIVE_SMS` – to detect incoming financial transaction SMS
-- `READ_SMS` – to parse SMS content
+- **Kotlin**: The primary programming language, utilizing features like Coroutines for async operations.
+- **Jetpack Compose**: For building a reactive and modern UI.
+- **Room Database**: For robust, local data persistence.
+- **Android Architecture Components**: Leveraging `ViewModel` for UI logic and `LiveData`/`Flow` for data observation.
+- **Gradle Kotlin DSL**: For managing dependencies and build configurations.
+- **Material 3**: For the design system and UI components.
 
-These permissions must be granted at runtime on modern Android versions.
+## 🚀 Getting Started
 
-## Building & Running
-1. Clone or download this repository.
-2. Open it in **Android Studio** (Giraffe or newer recommended).
-3. Sync Gradle and build the project.
-4. Run on physical device or emulator.
-5. When prompted, grant SMS permissions.
+### Prerequisites
+
+- Android Studio (Giraffe or newer recommended)
+- An Android device or emulator
+
+### Installation and Setup
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-repo/links.git
+    ```
+2.  **Open in Android Studio:**
+    Open the cloned project in Android Studio.
+3.  **Sync Gradle:**
+    Let Android Studio sync the Gradle files.
+4.  **Run the app:**
+    Run the app on a physical device or an emulator.
+5.  **Grant Permissions:**
+    When prompted, grant the necessary SMS permissions to enable the app to read and parse financial transaction SMS.
 
 ### Testing SMS Parsing
-In an emulator, use:
-```
+
+You can test the SMS parsing functionality in an emulator using the following adb command:
+
+```bash
 adb emu sms send <number> "<message>"
 ```
-Ensure the message matches the expected financial SMS format.
 
-## Future Roadmap
-- Cloud sync (Firebase / Supabase)
-- CSV/PDF data export
-- Detailed analytics dashboard
-- Cross-device support
-- Supporting more SMS formats
-- End‑to‑end and UI test coverage
+Make sure the message format matches the M-Pesa format expected by `MpesaParser.kt`.
 
-## License
-This project is currently closed-source unless otherwise stated by the author.
+## 🛣️ Future Roadmap
+
+- **☁️ Cloud Sync**: Complete the implementation of cloud synchronization using the existing `CloudSyncManager.kt`.
+- **📄 Data Export**: Add functionality to export shift summaries and transaction lists to CSV or PDF formats.
+- **📈 Analytics Dashboard**: Develop a detailed analytics dashboard to provide deeper insights into financial trends.
+- **🧪 Testing**: Increase test coverage with more unit, integration, and UI tests.
+- **🌐 Expanded SMS Support**: Add support for a wider range of SMS formats from different financial institutions.
+
+## 🤝 Contributing
+
+Contributions are welcome! If you have any ideas, suggestions, or bug reports, please open an issue or submit a pull request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "683650687924",
+    "project_id": "links-4695b",
+    "storage_bucket": "links-4695b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:683650687924:android:8e1d1496931e5a4f0a08e1",
+        "android_client_info": {
+          "package_name": "com.githow.links"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAPqLer2JlG8Yk4on7PTafwXcnT5VP8rO0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

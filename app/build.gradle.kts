@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.google.services)
     id("com.google.devtools.ksp") version "2.0.21-1.0.25"
 }
 
@@ -68,7 +69,7 @@ dependencies {
     // Lifecycle & ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")  // ← ADDED
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -77,5 +78,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Compose LiveData integration - CRITICAL FOR UI
-    implementation("androidx.compose.runtime:runtime-livedata:1.6.0")  // ← ADDED
+    implementation("androidx.compose.runtime:runtime-livedata:1.6.0")
+    implementation(libs.firebase.storage.ktx)
 }

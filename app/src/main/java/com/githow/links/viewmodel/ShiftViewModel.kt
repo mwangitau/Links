@@ -269,6 +269,32 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     )
 
                     shiftDao.updateShift(updatedShift)
+
+                    // Get all transactions for this shift to sync
+                    val transactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+
+                    // Cloud sync
+                    withContext(Dispatchers.Main) {
+                        _syncStatus.value = "Syncing updated shift to cloud..."
+                    }
+
+                    val syncResult = cloudSyncManager.syncShiftToCloud(
+                        shift = updatedShift,
+                        transactions = transactions
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        when (syncResult) {
+                            is SyncResult.Success -> {
+                                android.util.Log.d("ShiftViewModel", "☁️ Update Sync: ${syncResult.message}")
+                                _syncStatus.value = "✅ Shift update synced"
+                            }
+                            is SyncResult.Failure -> {
+                                android.util.Log.e("ShiftViewModel", "☁️ Update Sync failed: ${syncResult.error}")
+                                _syncStatus.value = "⚠️ Update sync failed: ${syncResult.error}"
+                            }
+                        }
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -372,7 +398,8 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 assignUnassignedTransactionsToShift(shiftId)
 
             } catch (e: Exception) {
-                android.util.Log.e("ShiftViewModel", "Error opening shift", e)
+                android.util.Log.e("ShiftViewModel", "Er" +
+                        "ror opening shift", e)
                 _errorMessage.value = "Error opening shift: ${e.message}"
             }
         }

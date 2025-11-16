@@ -17,6 +17,7 @@ LINKS is a powerful yet intuitive Android application crafted with **Kotlin** an
 - **📊 Real-Time Monitoring**: A dynamic dashboard (`ShiftDashboardScreen.kt`) provides a live view of both assigned and unassigned transaction totals, with updates happening in real-time.
 - **👥 Personnel Management**: A comprehensive module (`PersonManagementScreen.kt`) to add, edit, and maintain employee records, ensuring that your team's information is always up-to-date.
 - **🔒 Local Data Storage**: All data is securely stored on the device using the **Room persistence library**. The database schema is defined in `data/entity/` and accessed via DAOs in `data/dao/`. This ensures the app works perfectly offline.
+- **☁️ Cloud Sync**: Sync your shift data to Google Sheets for backup and further analysis. Configure your Google Apps Script webhook URL in `CloudSyncManager.kt` to get started.
 - **🎨 Modern UI**: A clean, modern, and reactive user interface built entirely with **Jetpack Compose** and **Material 3**. The theme and color palette are defined in `ui/theme/` and `res/values/colors.xml`.
 
 ## 📂 Project Structure
@@ -35,7 +36,7 @@ app/src/main/java/com/githow/links/
  │   └─ SmsReceiver.kt    # BroadcastReceiver for intercepting and handling incoming SMS.
  │
  ├─ sync/
- │   └─ CloudSyncManager.kt # (In-progress) Manager for handling cloud synchronization logic.
+ │   └─ CloudSyncManager.kt # Manager for handling cloud synchronization logic.
  │
  ├─ ui/
  │   ├─ screens/          # Composable screens for app features (OpenShiftScreen, ShiftDashboardScreen, etc.)
@@ -57,6 +58,7 @@ app/src/main/java/com/githow/links/
 - **Jetpack Compose**: For building a reactive and modern UI.
 - **Room Database**: For robust, local data persistence.
 - **Android Architecture Components**: Leveraging `ViewModel` for UI logic and `LiveData`/`Flow` for data observation.
+- **Google Apps Script**: For cloud data backup to Google Sheets.
 - **Gradle Kotlin DSL**: For managing dependencies and build configurations.
 - **Material 3**: For the design system and UI components.
 
@@ -66,6 +68,7 @@ app/src/main/java/com/githow/links/
 
 - Android Studio (Giraffe or newer recommended)
 - An Android device or emulator
+- A Google Account to set up the Google Apps Script webhook.
 
 ### Installation and Setup
 
@@ -75,11 +78,14 @@ app/src/main/java/com/githow/links/
     ```
 2.  **Open in Android Studio:**
     Open the cloned project in Android Studio.
-3.  **Sync Gradle:**
+3.  **Configure Cloud Sync:**
+    - Open `app/src/main/java/com/githow/links/sync/CloudSyncManager.kt`.
+    - Replace the placeholder `WEBHOOK_URL` with your own Google Apps Script deployment URL.
+4.  **Sync Gradle:**
     Let Android Studio sync the Gradle files.
-4.  **Run the app:**
+5.  **Run the app:**
     Run the app on a physical device or an emulator.
-5.  **Grant Permissions:**
+6.  **Grant Permissions:**
     When prompted, grant the necessary SMS permissions to enable the app to read and parse financial transaction SMS.
 
 ### Testing SMS Parsing
@@ -94,7 +100,6 @@ Make sure the message format matches the M-Pesa format expected by `MpesaParser.
 
 ## 🛣️ Future Roadmap
 
-- **☁️ Cloud Sync**: Complete the implementation of cloud synchronization using the existing `CloudSyncManager.kt`.
 - **📄 Data Export**: Add functionality to export shift summaries and transaction lists to CSV or PDF formats.
 - **📈 Analytics Dashboard**: Develop a detailed analytics dashboard to provide deeper insights into financial trends.
 - **🧪 Testing**: Increase test coverage with more unit, integration, and UI tests.

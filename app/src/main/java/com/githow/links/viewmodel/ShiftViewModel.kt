@@ -37,6 +37,9 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     // Closed shifts history
     val closedShifts: LiveData<List<Shift>> = transactionDao.getClosedShifts()
 
+    // All shifts (for history screen)
+    val allShifts: LiveData<List<Shift>> = shiftDao.getAllShifts()
+
     // People (CSA list)
     val persons: LiveData<List<Person>> = personDao.getAllActivePersons()
 

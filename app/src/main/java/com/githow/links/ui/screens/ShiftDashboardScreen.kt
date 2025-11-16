@@ -24,7 +24,10 @@ fun ShiftDashboardScreen(
     viewModel: ShiftViewModel,
     onNavigateToOpenShift: () -> Unit,
     onNavigateToCloseShift: () -> Unit,
-    onNavigateToAssignTransactions: () -> Unit
+    onNavigateToAssignTransactions: () -> Unit,
+    onNavigateToManageCSAs: () -> Unit = {},
+    onNavigateToShiftSummary: () -> Unit = {},
+    onNavigateToHistory: () -> Unit = {}
 ) {
     val currentShift by viewModel.currentActiveShift.observeAsState()
     val currentTransactions by viewModel.currentShiftTransactions.observeAsState(emptyList())
@@ -112,6 +115,13 @@ fun ShiftDashboardScreen(
                             Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Open New Shift")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = onNavigateToHistory,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("View Shift History")
                         }
                     }
                 }
@@ -233,6 +243,33 @@ fun ShiftDashboardScreen(
                     enabled = currentTransactions.isNotEmpty()
                 ) {
                     Text("Assign Transactions")
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onNavigateToManageCSAs,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Manage CSAs")
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onNavigateToShiftSummary,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("View Shift Summary")
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onNavigateToHistory,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("View Shift History")
                 }
 
                 Spacer(Modifier.height(8.dp))

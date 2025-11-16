@@ -107,13 +107,31 @@ fun LINKSApp(
             )
             return
         }
+        "shift_summary" -> {
+            ShiftSummaryScreen(
+                viewModel = shiftViewModel,
+                onNavigateBack = { currentScreen = "main" }
+            )
+            return
+        }
+        "shift_history" -> {
+            ClosedShiftsHistoryScreen(
+                viewModel = shiftViewModel,
+                onNavigateBack = { currentScreen = "main" },
+                onViewShiftDetails = { shiftId ->
+                    selectedShiftId = shiftId
+                    currentScreen = "shift_report"
+                }
+            )
+            return
+        }
         "shift_report" -> {
             selectedShiftId?.let { shiftId ->
                 ShiftReportScreen(
                     shiftId = shiftId,
                     viewModel = shiftViewModel,
                     onNavigateBack = {
-                        currentScreen = "main"
+                        currentScreen = "shift_history"
                         selectedShiftId = null
                     }
                 )
@@ -168,7 +186,10 @@ fun LINKSApp(
                     viewModel = shiftViewModel,
                     onNavigateToOpenShift = { currentScreen = "open_shift" },
                     onNavigateToCloseShift = { currentScreen = "close_shift" },
-                    onNavigateToAssignTransactions = { currentScreen = "assignment" }
+                    onNavigateToAssignTransactions = { currentScreen = "assignment" },
+                    onNavigateToManageCSAs = { currentScreen = "persons" },
+                    onNavigateToShiftSummary = { currentScreen = "shift_summary" },
+                    onNavigateToHistory = { currentScreen = "shift_history" }
                 )
             }
         }

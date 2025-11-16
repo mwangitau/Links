@@ -79,5 +79,8 @@ dependencies {
 
     // Compose LiveData integration - CRITICAL FOR UI
     implementation("androidx.compose.runtime:runtime-livedata:1.6.0")
+
+    // Firebase
     implementation(libs.firebase.storage.ktx)
+    implementation(libs.firebase.firestore.ktx)
 }

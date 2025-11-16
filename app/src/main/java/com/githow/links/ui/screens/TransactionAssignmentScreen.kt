@@ -30,6 +30,8 @@ fun TransactionAssignmentScreen(
 
     var selectedTransactions by remember { mutableStateOf(setOf<Long>()) }
     var showAssignDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
     var selectedPerson by remember { mutableStateOf<String?>(null) }
     var filterType by remember { mutableStateOf("unassigned") }  // unassigned, assigned, all
 
@@ -110,7 +112,9 @@ fun TransactionAssignmentScreen(
                                 }
                             },
                             onEdit = {
-                                // TODO: Show edit dialog
+                                transactionToEdit = transaction
+                                selectedPerson = transaction.assigned_to
+                                showEditDialog = true
                             }
                         )
                     }
@@ -140,6 +144,39 @@ fun TransactionAssignmentScreen(
                     showAssignDialog = false
                     selectedPerson = null
                 }
+            }
+        )
+    }
+
+    // Edit Dialog
+    if (showEditDialog && transactionToEdit != null) {
+        EditAssignmentDialog(
+            transaction = transactionToEdit!!,
+            persons = persons,
+            currentAssignment = selectedPerson,
+            onPersonSelected = { selectedPerson = it },
+            onDismiss = {
+                showEditDialog = false
+                transactionToEdit = null
+                selectedPerson = null
+            },
+            onConfirm = {
+                if (selectedPerson != null) {
+                    viewModel.reassignTransaction(
+                        transactionId = transactionToEdit!!.id,
+                        newPersonName = selectedPerson!!,
+                        newCategory = if (selectedPerson == "Debt Paid") "DEBT_PAID" else "CSA"
+                    )
+                    showEditDialog = false
+                    transactionToEdit = null
+                    selectedPerson = null
+                }
+            },
+            onUnassign = {
+                viewModel.unassignTransaction(transactionToEdit!!.id)
+                showEditDialog = false
+                transactionToEdit = null
+                selectedPerson = null
             }
         )
     }
@@ -402,6 +439,135 @@ fun AssignmentDialog(
                 enabled = selectedPerson != null
             ) {
                 Text("Assign")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun EditAssignmentDialog(
+    transaction: Transaction,
+    persons: List<com.githow.links.data.entity.Person>,
+    currentAssignment: String?,
+    onPersonSelected: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    onUnassign: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Assignment") },
+        text = {
+            Column {
+                // Transaction info
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = transaction.sender_name ?: transaction.business_name ?: "Unknown",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = formatAmount(transaction.amount),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = transaction.mpesa_code,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+
+                Text(
+                    "Currently assigned to: ${transaction.assigned_to}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Text(
+                    "Reassign to:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                LazyColumn(modifier = Modifier.height(200.dp)) {
+                    // Persons
+                    items(persons.filter { it.is_active }) { person ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = currentAssignment == person.short_name,
+                                    onClick = { onPersonSelected(person.short_name) }
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = currentAssignment == person.short_name,
+                                onClick = { onPersonSelected(person.short_name) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(person.short_name)
+                        }
+                    }
+
+                    // Debt Paid option
+                    item {
+                        Divider(modifier = Modifier.padding(vertical = 8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = currentAssignment == "Debt Paid",
+                                    onClick = { onPersonSelected("Debt Paid") }
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = currentAssignment == "Debt Paid",
+                                onClick = { onPersonSelected("Debt Paid") }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Debt Paid")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onUnassign,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Unassign")
+                }
+                Button(
+                    onClick = onConfirm,
+                    enabled = currentAssignment != null && currentAssignment != transaction.assigned_to
+                ) {
+                    Text("Reassign")
+                }
             }
         },
         dismissButton = {

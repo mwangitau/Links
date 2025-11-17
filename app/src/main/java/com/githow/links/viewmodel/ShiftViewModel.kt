@@ -120,7 +120,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun closeShift(
         shiftId: Long,
-        closingBalance: Double,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -155,6 +154,11 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                         return@withContext
                     }
 
+                    // Get closing balance from the last transaction before closing time
+                    val closingTimestamp = System.currentTimeMillis()
+                    val lastTransaction = transactionDao.getLatestTransactionBefore(closingTimestamp)
+                    val closingBalance = lastTransaction?.account_balance ?: shift.open_balance
+
                     // Calculate totals using YOUR transaction field names
                     val totalReceived = transactions
                         .filter { it.transaction_type == "RECEIVED" }
@@ -180,7 +184,7 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                     // Update shift
                     val updatedShift = shift.copy(
-                        end_time = System.currentTimeMillis(),
+                        end_time = closingTimestamp,
                         close_balance = closingBalance,
                         status = "CLOSED",
                         total_received = totalReceived,
@@ -664,7 +668,7 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     android.util.Log.d("ShiftViewModel", "Deactivated person: ${person.short_name}")
                 } else {
                     personDao.reactivatePerson(personId)
-                    android.util.Log.d("ShiftViewModel", "Reactivated person: ${person.short_name}")
+                    android.util_log.d("ShiftViewModel", "Reactivated person: ${person.short_name}")
                 }
 
             } catch (e: Exception) {

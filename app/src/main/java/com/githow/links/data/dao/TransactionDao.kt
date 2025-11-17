@@ -27,6 +27,9 @@ interface TransactionDao {
 
     @Query("SELECT COUNT(*) FROM transactions WHERE mpesa_code = :mpesaCode")
     suspend fun transactionExists(mpesaCode: String): Int
+    
+    @Query("SELECT * FROM transactions WHERE timestamp <= :timestamp ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestTransactionBefore(timestamp: Long): Transaction?
 
     // ============ GET TRANSACTIONS (Various queries) ============
 

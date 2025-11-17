@@ -11,13 +11,16 @@ import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
 import com.githow.links.data.entity.ShiftAssignment
 import com.githow.links.data.entity.Transaction
+import com.githow.links.data.entity.RawSms
+import com.githow.links.data.dao.RawSmsDao
 
 @Database(
     entities = [
         Transaction::class,
         Shift::class,
+        Person::class,
         ShiftAssignment::class,
-        Person::class
+        RawSms::class
     ],
     version = 3,  // Increment version for ShiftDao addition
     exportSchema = false
@@ -26,7 +29,8 @@ abstract class LinksDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
     abstract fun personDao(): PersonDao
-    abstract fun shiftDao(): ShiftDao  // ADDED: Required for shift operations
+    abstract fun shiftDao(): ShiftDao
+    abstract fun rawSmsDao(): RawSmsDao
 
     companion object {
         @Volatile

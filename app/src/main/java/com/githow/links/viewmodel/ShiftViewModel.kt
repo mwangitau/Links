@@ -1,6 +1,7 @@
 package com.githow.links.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -11,6 +12,7 @@ import com.githow.links.data.entity.Shift
 import com.githow.links.data.entity.Transaction
 import com.githow.links.sync.CloudSyncManager
 import com.githow.links.sync.SyncResult
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -120,115 +122,106 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun closeShift(
         shiftId: Long,
+        closingBalance: Double,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    val shift = shiftDao.getShiftByIdDirect(shiftId)
-
-                    if (shift == null) {
-                        withContext(Dispatchers.Main) {
-                            onError("Shift not found")
-                        }
-                        return@withContext
-                    }
-
-                    if (shift.status == "CLOSED") {
-                        withContext(Dispatchers.Main) {
-                            onError("This shift is already closed")
-                        }
-                        return@withContext
-                    }
-
-                    // Get all transactions for this shift
-                    val transactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
-
-                    // Check for unassigned transactions
-                    val unassignedCount = transactions.count { it.assigned_to.isNullOrBlank() }
-                    if (unassignedCount > 0) {
-                        withContext(Dispatchers.Main) {
-                            onError("Cannot close shift with $unassignedCount unassigned transaction(s)")
-                        }
-                        return@withContext
-                    }
-
-                    // Get closing balance from the last transaction before closing time
-                    val closingTimestamp = System.currentTimeMillis()
-                    val lastTransaction = transactionDao.getLatestTransactionBefore(closingTimestamp)
-                    val closingBalance = lastTransaction?.account_balance ?: shift.open_balance
-
-                    // Calculate totals using YOUR transaction field names
-                    val totalReceived = transactions
-                        .filter { it.transaction_type == "RECEIVED" }
-                        .sumOf { it.amount }
-
-                    val totalTransfers = transactions
-                        .filter { it.transaction_type == "SENT" }
-                        .sumOf { it.amount }
-
-                    val totalWithdrawals = transactions
-                        .filter { it.transaction_type == "WITHDRAW" }
-                        .sumOf { it.amount }
-
-                    // Calculate expected total: (close_balance + withdrawals) - open_balance
-                    val expectedTotal = (closingBalance + totalWithdrawals) - shift.open_balance
-
-                    // Calculate actual total from CSA assignments
-                    val actualTotal = transactions
-                        .filter { !it.assigned_to.isNullOrBlank() }
-                        .sumOf { it.amount }
-
-                    val difference = expectedTotal - actualTotal
-
-                    // Update shift
-                    val updatedShift = shift.copy(
-                        end_time = closingTimestamp,
-                        close_balance = closingBalance,
-                        status = "CLOSED",
-                        total_received = totalReceived,
-                        total_transfers = totalTransfers,
-                        total_withdrawals = totalWithdrawals,
-                        expected_total = expectedTotal,
-                        actual_total = actualTotal,
-                        difference = difference,
-                        updated_at = System.currentTimeMillis()
-                    )
-
-                    shiftDao.updateShift(updatedShift)
-
-                    // Cloud sync
-                    withContext(Dispatchers.Main) {
-                        _syncStatus.value = "Syncing to cloud..."
-                    }
-
-                    val syncResult = cloudSyncManager.syncShiftToCloud(
-                        shift = updatedShift,
-                        transactions = transactions
-                    )
-
-                    withContext(Dispatchers.Main) {
-                        when (syncResult) {
-                            is SyncResult.Success -> {
-                                android.util.Log.d("ShiftViewModel", "☁️ ${syncResult.message}")
-                                _syncStatus.value = "✅ Synced to Google Sheets"
-                            }
-                            is SyncResult.Failure -> {
-                                android.util.Log.e("ShiftViewModel", "☁️ Sync failed: ${syncResult.error}")
-                                _syncStatus.value = "⚠️ Sync failed: ${syncResult.error}"
-                            }
-                        }
-                    }
+                val shift = shiftDao.getShiftById(shiftId)
+                if (shift == null) {
+                    onError("Shift not found")
+                    return@launch
                 }
 
-                withContext(Dispatchers.Main) {
-                    onSuccess()
+                // Get all transactions in this shift
+                val shiftTransactions = transactionDao.getTransactionsByShiftId(shiftId)
+
+                // 🔒 OPTION 2: Use Account Balance Timestamp (Most Accurate)
+                // Find the transaction that shows this exact closing balance
+                val closingBalanceTransaction = shiftTransactions
+                    .filter {
+                        // Use small tolerance for floating point comparison
+                        Math.abs(it.account_balance - closingBalance) < 0.01
+                    }
+                    .maxByOrNull { it.timestamp }  // Get the latest one if multiple matches
+
+                val cutoffTime = if (closingBalanceTransaction != null) {
+                    // Found exact balance match - use its timestamp + 1 second
+                    val cutoff = closingBalanceTransaction.timestamp + 1000
+                    Log.d("SHIFT_CLOSE", "✅ Found balance match: ${closingBalanceTransaction.mpesa_code}")
+                    Log.d("SHIFT_CLOSE", "   Balance: Ksh ${closingBalanceTransaction.account_balance}")
+                    Log.d("SHIFT_CLOSE", "   Timestamp: ${closingBalanceTransaction.timestamp}")
+                    Log.d("SHIFT_CLOSE", "   Cutoff set to: $cutoff (+1 second)")
+                    cutoff
+                } else {
+                    // No exact match - use last transaction + 1 second as fallback
+                    val lastTxn = shiftTransactions.maxByOrNull { it.timestamp }
+                    val cutoff = lastTxn?.timestamp?.plus(1000) ?: System.currentTimeMillis()
+                    Log.w("SHIFT_CLOSE", "⚠️ No exact balance match for Ksh $closingBalance")
+                    Log.w("SHIFT_CLOSE", "   Closest balances:")
+                    shiftTransactions.sortedByDescending { it.timestamp }.take(3).forEach {
+                        Log.w("SHIFT_CLOSE", "     - Ksh ${it.account_balance} at ${it.timestamp}")
+                    }
+                    Log.w("SHIFT_CLOSE", "   Using last transaction + 1 sec as fallback: $cutoff")
+                    cutoff
                 }
+
+                Log.d("SHIFT_CLOSE", "🔒 Final cutoff timestamp: $cutoffTime")
+
+                // Calculate totals
+                val totalReceived = shiftTransactions
+                    .filter { it.transaction_type == "RECEIVED" }
+                    .sumOf { it.amount }
+
+                val totalTransfers = shiftTransactions
+                    .filter { it.transaction_type == "SENT" }
+                    .sumOf { it.amount }
+
+                val totalWithdrawals = shiftTransactions
+                    .filter { it.transaction_type == "WITHDRAW" }
+                    .sumOf { it.amount }
+
+                // Expected total: (closing - opening) + withdrawals
+                val expectedTotal = (closingBalance - shift.open_balance) + totalWithdrawals
+
+                // Actual total: sum of all assignments
+                val actualTotal = shiftTransactions
+                    .filter { !it.assigned_to.isNullOrBlank() }
+                    .sumOf { it.amount }
+
+                val difference = expectedTotal - actualTotal
+
+                // Update shift with all calculated values
+                val updatedShift = shift.copy(
+                    status = "CLOSED",
+                    close_balance = closingBalance,
+                    end_time = System.currentTimeMillis(),
+                    cutoff_timestamp = cutoffTime,  // ← Set the smart cutoff
+                    total_received = totalReceived,
+                    total_transfers = totalTransfers,
+                    total_withdrawals = totalWithdrawals,
+                    expected_total = expectedTotal,
+                    actual_total = actualTotal,
+                    difference = difference,
+                    updated_at = System.currentTimeMillis()
+                )
+
+                shiftDao.updateShift(updatedShift)
+
+                Log.d("SHIFT_CLOSE", "✅ Shift #$shiftId closed successfully")
+                Log.d("SHIFT_CLOSE", "   Opening Balance: Ksh ${shift.open_balance}")
+                Log.d("SHIFT_CLOSE", "   Closing Balance: Ksh $closingBalance")
+                Log.d("SHIFT_CLOSE", "   Expected Total: Ksh $expectedTotal")
+                Log.d("SHIFT_CLOSE", "   Actual Total: Ksh $actualTotal")
+                Log.d("SHIFT_CLOSE", "   Difference: Ksh $difference")
+
+                onSuccess()
+
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onError("Failed to close shift: ${e.message}")
-                }
+                Log.e("SHIFT_CLOSE", "❌ Error closing shift: ${e.message}", e)
+                e.printStackTrace()
+                onError(e.message ?: "Unknown error")
             }
         }
     }

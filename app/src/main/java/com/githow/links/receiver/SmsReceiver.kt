@@ -158,13 +158,23 @@ class SmsReceiver : BroadcastReceiver() {
                 return
             }
 
-            // Get open shift
+            // 🔒 Check for open shift and respect cutoff timestamp
             val openShift = transactionDao.getOpenShift()
+
             val finalTransaction = if (openShift != null) {
-                Log.d(TAG, "📋 Assigning to shift: ${openShift.shift_id}")
-                transaction.copy(shift_id = openShift.shift_id)
+                if (openShift.cutoff_timestamp != null) {
+                    if (transaction.timestamp > openShift.cutoff_timestamp) {
+                        Log.w(TAG, "⚠️ SMS after cutoff - UNASSIGNED")
+                        transaction.copy(shift_id = null)
+                    } else {
+                        Log.d(TAG, "✅ SMS before cutoff - assigning")
+                        transaction.copy(shift_id = openShift.shift_id)
+                    }
+                } else {
+                    Log.d(TAG, "📋 No cutoff - assigning")
+                    transaction.copy(shift_id = openShift.shift_id)
+                }
             } else {
-                Log.d(TAG, "⚠️ No open shift")
                 transaction
             }
 

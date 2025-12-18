@@ -128,23 +128,23 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
-                val shift = shiftDao.getShiftById(shiftId)
+                val shift = shiftDao.getShiftByIdDirect(shiftId)
                 if (shift == null) {
                     onError("Shift not found")
                     return@launch
                 }
 
                 // Get all transactions in this shift
-                val shiftTransactions = transactionDao.getTransactionsByShiftId(shiftId)
+                val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
 
                 // 🔒 OPTION 2: Use Account Balance Timestamp (Most Accurate)
                 // Find the transaction that shows this exact closing balance
                 val closingBalanceTransaction = shiftTransactions
-                    .filter {
+                    .filter { transaction ->
                         // Use small tolerance for floating point comparison
-                        Math.abs(it.account_balance - closingBalance) < 0.01
+                        abs(transaction.account_balance - closingBalance) < 0.01
                     }
-                    .maxByOrNull { it.timestamp }  // Get the latest one if multiple matches
+                    .maxByOrNull { transaction -> transaction.timestamp }  // Get the latest one if multiple matches
 
                 val cutoffTime = if (closingBalanceTransaction != null) {
                     // Found exact balance match - use its timestamp + 1 second
@@ -156,12 +156,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     cutoff
                 } else {
                     // No exact match - use last transaction + 1 second as fallback
-                    val lastTxn = shiftTransactions.maxByOrNull { it.timestamp }
+                    val lastTxn = shiftTransactions.maxByOrNull { transaction -> transaction.timestamp }
                     val cutoff = lastTxn?.timestamp?.plus(1000) ?: System.currentTimeMillis()
                     Log.w("SHIFT_CLOSE", "⚠️ No exact balance match for Ksh $closingBalance")
                     Log.w("SHIFT_CLOSE", "   Closest balances:")
-                    shiftTransactions.sortedByDescending { it.timestamp }.take(3).forEach {
-                        Log.w("SHIFT_CLOSE", "     - Ksh ${it.account_balance} at ${it.timestamp}")
+                    shiftTransactions.sortedByDescending { transaction -> transaction.timestamp }.take(3).forEach { transaction ->
+                        Log.w("SHIFT_CLOSE", "     - Ksh ${transaction.account_balance} at ${transaction.timestamp}")
                     }
                     Log.w("SHIFT_CLOSE", "   Using last transaction + 1 sec as fallback: $cutoff")
                     cutoff
@@ -171,24 +171,24 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Calculate totals
                 val totalReceived = shiftTransactions
-                    .filter { it.transaction_type == "RECEIVED" }
-                    .sumOf { it.amount }
+                    .filter { transaction -> transaction.transaction_type == "RECEIVED" }
+                    .sumOf { transaction -> transaction.amount }
 
                 val totalTransfers = shiftTransactions
-                    .filter { it.transaction_type == "SENT" }
-                    .sumOf { it.amount }
+                    .filter { transaction -> transaction.transaction_type == "SENT" }
+                    .sumOf { transaction -> transaction.amount }
 
                 val totalWithdrawals = shiftTransactions
-                    .filter { it.transaction_type == "WITHDRAW" }
-                    .sumOf { it.amount }
+                    .filter { transaction -> transaction.transaction_type == "WITHDRAW" }
+                    .sumOf { transaction -> transaction.amount }
 
                 // Expected total: (closing - opening) + withdrawals
                 val expectedTotal = (closingBalance - shift.open_balance) + totalWithdrawals
 
                 // Actual total: sum of all assignments
                 val actualTotal = shiftTransactions
-                    .filter { !it.assigned_to.isNullOrBlank() }
-                    .sumOf { it.amount }
+                    .filter { transaction -> !transaction.assigned_to.isNullOrBlank() }
+                    .sumOf { transaction -> transaction.amount }
 
                 val difference = expectedTotal - actualTotal
 
@@ -661,7 +661,7 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     android.util.Log.d("ShiftViewModel", "Deactivated person: ${person.short_name}")
                 } else {
                     personDao.reactivatePerson(personId)
-                    android.util_log.d("ShiftViewModel", "Reactivated person: ${person.short_name}")
+                    android.util.Log.d("ShiftViewModel", "Reactivated person: ${person.short_name}")
                 }
 
             } catch (e: Exception) {

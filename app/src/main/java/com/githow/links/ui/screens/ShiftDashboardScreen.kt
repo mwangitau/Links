@@ -127,10 +127,15 @@ fun ShiftDashboardScreen(
                 }
             } else {
                 // Active shift exists
+                val shiftStatusColor = when (currentShift?.status) {
+                    "FROZEN" -> MaterialTheme.colorScheme.tertiaryContainer
+                    else -> MaterialTheme.colorScheme.primaryContainer
+                }
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                        containerColor = shiftStatusColor
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -141,7 +146,10 @@ fun ShiftDashboardScreen(
                         ) {
                             Column {
                                 Text(
-                                    "Active Shift #${currentShift?.shift_id}",
+                                    if (currentShift?.status == "FROZEN")
+                                        "🔒 Frozen Shift #${currentShift?.shift_id}"
+                                    else
+                                        "Active Shift #${currentShift?.shift_id}",
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -150,11 +158,25 @@ fun ShiftDashboardScreen(
                                     "Started: ${dateFormat.format(Date(currentShift?.start_time ?: 0))}",
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                                currentShift?.cutoff_timestamp?.let { cutoffTime ->
+                                    if (currentShift?.status == "FROZEN") {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            "Frozen: ${dateFormat.format(Date(cutoffTime))}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.tertiary
+                                        )
+                                    }
+                                }
                             }
                             Icon(
                                 Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = if (currentShift?.status == "FROZEN")
+                                    MaterialTheme.colorScheme.tertiary
+                                else
+                                    MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(32.dp)
                             )
                         }
@@ -272,13 +294,67 @@ fun ShiftDashboardScreen(
                     Text("View Shift History")
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.dp))
 
+                // FREEZE SHIFT BUTTON (Step 1)
+                if (currentShift?.status == "ACTIVE") {
+                    Button(
+                        onClick = {
+                            viewModel.freezeShift(
+                                onSuccess = {
+                                    // Shift is now FROZEN - user can assign remaining transactions
+                                },
+                                onError = { error ->
+                                    // Handle error (show toast/snackbar)
+                                }
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondary
+                        )
+                    ) {
+                        Text("🔒 Freeze Shift (Step 1)")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Freeze the shift to stop new transactions from being added. You can then assign remaining transactions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // CLOSE SHIFT BUTTON (Step 2) - Only available if FROZEN
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onNavigateToCloseShift,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = currentShift?.status == "FROZEN"
                 ) {
-                    Text("Close Shift")
+                    Text(if (currentShift?.status == "FROZEN") "Close Shift (Step 2)" else "Close Shift")
+                }
+
+                if (currentShift?.status == "FROZEN") {
+                    Spacer(Modifier.height(8.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        )
+                    ) {
+                        Text(
+                            "✓ Shift is FROZEN. Assign all transactions, then click 'Close Shift'.",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                } else if (currentShift?.status == "ACTIVE") {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "To close shift: First freeze it, then assign all transactions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

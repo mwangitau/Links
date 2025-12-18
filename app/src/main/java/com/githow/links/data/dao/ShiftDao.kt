@@ -13,10 +13,12 @@ interface ShiftDao {
     @Update
     suspend fun updateShift(shift: Shift)
 
-    @Query("SELECT * FROM shifts WHERE status = 'ACTIVE' LIMIT 1")
+    // Get active or frozen shift (LiveData)
+    @Query("SELECT * FROM shifts WHERE status IN ('ACTIVE', 'FROZEN') LIMIT 1")
     fun getActiveShift(): LiveData<Shift?>
 
-    @Query("SELECT * FROM shifts WHERE status = 'ACTIVE' LIMIT 1")
+    // Get active or frozen shift (Direct/Suspend)
+    @Query("SELECT * FROM shifts WHERE status IN ('ACTIVE', 'FROZEN') LIMIT 1")
     suspend fun getActiveShiftDirect(): Shift?
 
     @Query("SELECT * FROM shifts WHERE status = 'CLOSED' ORDER BY end_time DESC LIMIT 1")

@@ -27,7 +27,7 @@ interface TransactionDao {
 
     @Query("SELECT COUNT(*) FROM transactions WHERE mpesa_code = :mpesaCode")
     suspend fun transactionExists(mpesaCode: String): Int
-    
+
     @Query("SELECT * FROM transactions WHERE timestamp <= :timestamp ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestTransactionBefore(timestamp: Long): Transaction?
 
@@ -40,12 +40,12 @@ interface TransactionDao {
     fun getAllTransactionsLive(): LiveData<List<Transaction>>
 
     /**
-     * Get all transactions for the current active shift (LiveData)
+     * Get all transactions for the current active or frozen shift (LiveData)
      */
     @Query("""
         SELECT t.* FROM transactions t
         INNER JOIN shifts s ON t.shift_id = s.shift_id
-        WHERE s.status = 'ACTIVE'
+        WHERE s.status IN ('ACTIVE', 'FROZEN')
         ORDER BY t.timestamp DESC
     """)
     fun getCurrentShiftTransactions(): LiveData<List<Transaction>>
@@ -69,12 +69,12 @@ interface TransactionDao {
     suspend fun searchTransactions(query: String): List<Transaction>
 
     /**
-     * Get unassigned transactions for current shift
+     * Get unassigned transactions for current shift (ACTIVE or FROZEN)
      */
     @Query("""
         SELECT t.* FROM transactions t
         INNER JOIN shifts s ON t.shift_id = s.shift_id
-        WHERE s.status = 'ACTIVE' 
+        WHERE s.status IN ('ACTIVE', 'FROZEN')
         AND (t.assigned_to IS NULL OR t.assigned_to = '')
         ORDER BY t.timestamp DESC
     """)
@@ -108,10 +108,12 @@ interface TransactionDao {
     @Query("SELECT * FROM shifts WHERE shift_id = :id")
     suspend fun getShiftById(id: Long): Shift?
 
-    @Query("SELECT * FROM shifts WHERE status = 'ACTIVE' LIMIT 1")
+    // Get open shift (ACTIVE or FROZEN) - for SMS receiver to assign transactions
+    @Query("SELECT * FROM shifts WHERE status IN ('ACTIVE', 'FROZEN') LIMIT 1")
     suspend fun getOpenShift(): Shift?
 
-    @Query("SELECT * FROM shifts WHERE status = 'ACTIVE' LIMIT 1")
+    // Get open shift (ACTIVE or FROZEN) - LiveData version
+    @Query("SELECT * FROM shifts WHERE status IN ('ACTIVE', 'FROZEN') LIMIT 1")
     fun getOpenShiftLive(): LiveData<Shift?>
 
     @Query("SELECT * FROM shifts WHERE status = 'CLOSED' ORDER BY end_time DESC")

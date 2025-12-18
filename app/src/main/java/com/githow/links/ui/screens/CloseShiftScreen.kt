@@ -230,15 +230,48 @@ fun CloseShiftScreen(
 
                 Spacer(Modifier.height(24.dp))
 
+                // Check if shift is FROZEN
+                val isFrozen = currentShift?.status == "FROZEN"
+                val canClose = isFrozen && unassignedCount == 0 && closingBalanceText.isNotBlank()
+
+                if (!isFrozen) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "⚠️ Shift Not Frozen",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "You must FREEZE the shift first (from Shift Dashboard) before you can close it. This prevents new transactions from being added while you're closing.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+
                 Button(
                     onClick = {
                         val shift = currentShift
                         val closingBalance = closingBalanceText.toDoubleOrNull()
+
                         if (closingBalance == null) {
                             errorMessage = "Please enter a valid closing balance"
                             showErrorDialog = true
+                        } else if (!isFrozen) {
+                            errorMessage = "Shift must be FROZEN before closing. Go to Shift Dashboard and click 'Freeze Shift' first."
+                            showErrorDialog = true
                         } else if (unassignedCount > 0) {
-                            errorMessage = "Cannot close shift with unassigned transactions"
+                            errorMessage = "Cannot close shift with $unassignedCount unassigned transactions. Please assign them first."
                             showErrorDialog = true
                         } else if (shift != null) {
                             isProcessing = true
@@ -258,13 +291,18 @@ fun CloseShiftScreen(
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
-                    enabled = !isProcessing && closingBalanceText.isNotBlank()
+                    enabled = canClose && !isProcessing
                 ) {
                     if (isProcessing) {
                         CircularProgressIndicator(Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (isProcessing) "Closing Shift..." else "Close Shift")
+                    Text(
+                        if (isProcessing) "Closing Shift..."
+                        else if (!isFrozen) "Freeze Shift First"
+                        else if (unassignedCount > 0) "Assign All Transactions First"
+                        else "Close Shift"
+                    )
                 }
 
                 Spacer(Modifier.height(8.dp))

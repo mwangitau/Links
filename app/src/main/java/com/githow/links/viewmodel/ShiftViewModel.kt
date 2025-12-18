@@ -118,6 +118,65 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Freeze the current active shift (Step 1 of Two-Step Close Process)
+     * Sets cutoff_timestamp and changes status to "FROZEN"
+     * Any SMS that arrives after this will NOT be assigned to this shift
+     */
+    fun freezeShift(
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    // Get current active shift
+                    val activeShift = shiftDao.getActiveShiftDirect()
+
+                    if (activeShift == null) {
+                        withContext(Dispatchers.Main) {
+                            onError("No active shift to freeze")
+                        }
+                        return@withContext
+                    }
+
+                    if (activeShift.status == "FROZEN") {
+                        withContext(Dispatchers.Main) {
+                            onError("Shift is already frozen")
+                        }
+                        return@withContext
+                    }
+
+                    // Set cutoff timestamp to NOW
+                    val cutoffTime = System.currentTimeMillis()
+
+                    // Update shift to FROZEN status
+                    val frozenShift = activeShift.copy(
+                        status = "FROZEN",
+                        cutoff_timestamp = cutoffTime,
+                        updated_at = System.currentTimeMillis()
+                    )
+
+                    shiftDao.updateShift(frozenShift)
+
+                    Log.d("SHIFT_FREEZE", "✅ Shift #${activeShift.shift_id} FROZEN successfully")
+                    Log.d("SHIFT_FREEZE", "   Cutoff Timestamp: $cutoffTime")
+                    Log.d("SHIFT_FREEZE", "   Any SMS after this will NOT be assigned to this shift")
+                }
+
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+
+            } catch (e: Exception) {
+                Log.e("SHIFT_FREEZE", "❌ Error freezing shift: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    onError("Failed to freeze shift: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
      * Close the current shift with manual closing balance (FOR NEW CLOSE SHIFT SCREEN)
      */
     fun closeShift(
@@ -526,6 +585,16 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 android.util.Log.e("ShiftViewModel", "Error loading shift transactions", e)
             }
+        }
+    }
+
+    /**
+     * Refresh transactions for current shift (for pull-to-refresh)
+     */
+    fun refreshTransactions() {
+        currentShift.value?.let { shift ->
+            android.util.Log.d("ShiftViewModel", "🔄 Refreshing transactions for shift ${shift.shift_id}")
+            loadShiftTransactions(shift.shift_id)
         }
     }
 

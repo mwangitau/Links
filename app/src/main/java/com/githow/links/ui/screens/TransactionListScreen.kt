@@ -169,7 +169,7 @@ fun TransactionCard(transaction: Transaction) {
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header: Name and Amount
+            // Header: M-PESA Code and Amount
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -177,9 +177,14 @@ fun TransactionCard(transaction: Transaction) {
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = transaction.sender_name ?: transaction.business_name ?: "Unknown",
+                        text = transaction.mpesa_code,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = transaction.sender_name ?: transaction.business_name ?: "Unknown",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                     )
                     if (transaction.sender_phone != null) {
                         Text(
@@ -205,11 +210,10 @@ fun TransactionCard(transaction: Transaction) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    DetailRow(label = "Code", value = transaction.mpesa_code)
                     DetailRow(label = "Time", value = "${transaction.date_received} ${transaction.time_received}")
+                    DetailRow(label = "Balance", value = formatAmount(transaction.account_balance))
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    DetailRow(label = "Balance", value = formatAmount(transaction.account_balance))
                     DetailRow(label = "Cost", value = formatAmount(transaction.transaction_cost))
                 }
             }

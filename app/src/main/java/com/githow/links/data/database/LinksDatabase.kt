@@ -22,7 +22,7 @@ import com.githow.links.data.dao.RawSmsDao
         ShiftAssignment::class,
         RawSms::class
     ],
-    version = 3,  // Increment version for ShiftDao addition
+    version = 4,  // Increment for FROZEN status queries update
     exportSchema = false
 )
 abstract class LinksDatabase : RoomDatabase() {

@@ -275,6 +275,26 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("SHIFT_CLOSE", "   Actual Total: Ksh $actualTotal")
                 Log.d("SHIFT_CLOSE", "   Difference: Ksh $difference")
 
+                // 🔄 CLOUD SYNC - Sync to Google Sheets
+                Log.d("ShiftViewModel", "🔄 Starting cloud sync for shift #$shiftId...")
+                _syncStatus.value = "Syncing to cloud..."
+
+                val syncResult = cloudSyncManager.syncShiftToCloud(
+                    shift = updatedShift,
+                    transactions = shiftTransactions
+                )
+
+                when (syncResult) {
+                    is SyncResult.Success -> {
+                        Log.d("ShiftViewModel", "☁️ ${syncResult.message}")
+                        _syncStatus.value = "✅ Synced to Google Sheets"
+                    }
+                    is SyncResult.Failure -> {
+                        Log.e("ShiftViewModel", "☁️ Sync failed: ${syncResult.error}")
+                        _syncStatus.value = "⚠️ Sync failed: ${syncResult.error}"
+                    }
+                }
+
                 onSuccess()
 
             } catch (e: Exception) {
@@ -608,11 +628,52 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     transactionDao.assignTransaction(id, personName, category)
                 }
 
+                android.util.Log.d("ShiftViewModel", "✅ Assigned ${transactionIds.size} transactions to $personName")
+
+                // ⚡ REAL-TIME SYNC: Backup assigned transactions immediately
+                launch(Dispatchers.IO) {
+                    try {
+                        // Get active shift directly from database
+                        val activeShift = shiftDao.getActiveShiftDirect()
+
+                        if (activeShift == null) {
+                            android.util.Log.w("ShiftViewModel", "⚠️ No active shift found - skipping real-time sync")
+                            return@launch
+                        }
+
+                        android.util.Log.d("ShiftViewModel", "🔄 Starting real-time sync for shift ${activeShift.shift_id}")
+
+                        val assignedTransactions = transactionDao.getTransactionsByShiftIdDirect(activeShift.shift_id)
+                            .filter { it.id in transactionIds }
+
+                        android.util.Log.d("ShiftViewModel", "📊 Found ${assignedTransactions.size} assigned transactions to sync")
+
+                        if (assignedTransactions.isNotEmpty()) {
+                            android.util.Log.d("ShiftViewModel", "⚡ Real-time sync: ${assignedTransactions.size} transactions")
+                            val syncResult = cloudSyncManager.syncAssignedTransactions(activeShift, assignedTransactions)
+
+                            when (syncResult) {
+                                is SyncResult.Success -> {
+                                    android.util.Log.d("ShiftViewModel", "✅ Real-time backup successful")
+                                }
+                                is SyncResult.Failure -> {
+                                    android.util.Log.w("ShiftViewModel", "⚠️ Real-time backup pending: ${syncResult.error}")
+                                }
+                            }
+                        } else {
+                            android.util.Log.w("ShiftViewModel", "⚠️ No assigned transactions found to sync")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("ShiftViewModel", "❌ Background sync error: ${e.message}", e)
+                        // Don't fail assignment if backup fails
+                    }
+                }
+
+                // Also reload UI transactions if currentShift is available
                 currentShift.value?.let { shift ->
                     loadShiftTransactions(shift.shift_id)
                 }
 
-                android.util.Log.d("ShiftViewModel", "✅ Assigned ${transactionIds.size} transactions to $personName")
             } catch (e: Exception) {
                 android.util.Log.e("ShiftViewModel", "Error assigning transactions", e)
                 _errorMessage.value = "Error assigning transactions: ${e.message}"

@@ -20,7 +20,7 @@ class CloudSyncManager(private val context: Context) {
         private const val TAG = "CloudSyncManager"
 
         // TODO: Replace with your actual Google Apps Script webhook URL
-        private const val WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbx_zlQiK5aX-UzG2yXzewlDDrmSCPW-7oQlucXzi1rqt52nxS8ImihtInFaoG0aPhU7/exec"
+        private const val WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyMiJudd8CGRrYm7_btLxj6rOycte6HbrGgAmLd6W8z6OLQ1WrVETiG2zWQU46XH_yM/exec"
 
         private const val TIMEOUT_SECONDS = 30L
         private const val MAX_RETRIES = 3
@@ -31,6 +31,32 @@ class CloudSyncManager(private val context: Context) {
         .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
+
+    /**
+     * Sync assigned transactions immediately (real-time backup)
+     * This runs in the background without blocking the UI
+     */
+    suspend fun syncAssignedTransactions(
+        shift: Shift,
+        transactions: List<Transaction>
+    ): SyncResult = withContext(Dispatchers.IO) {
+        Log.d(TAG, "⚡ Real-time sync: ${transactions.size} assigned transactions")
+
+        // Build lightweight payload (only assigned transactions)
+        val payload = buildAssignmentPayload(shift, transactions)
+
+        // Try sync with single retry (fast fail for real-time)
+        return@withContext try {
+            sendToWebhook(payload, 1)
+        } catch (e: Exception) {
+            Log.e(TAG, "⚠️ Real-time sync failed (will retry at shift close): ${e.message}")
+            // Don't block assignment - just log the failure
+            SyncResult.Failure(
+                error = "Background sync pending: ${e.message}",
+                timestamp = System.currentTimeMillis()
+            )
+        }
+    }
 
     /**
      * Sync a closed shift with all its transactions to Google Sheets via webhook
@@ -129,6 +155,59 @@ class CloudSyncManager(private val context: Context) {
             put("metadata", JSONObject().apply {
                 put("app_version", "1.0")
                 put("sync_timestamp", System.currentTimeMillis())
+                put("sync_type", "full") // "full" for shift close, "incremental" for real-time
+                put("device_id", android.provider.Settings.Secure.getString(
+                    context.contentResolver,
+                    android.provider.Settings.Secure.ANDROID_ID
+                ))
+            })
+        }
+    }
+
+    /**
+     * Build lightweight payload for real-time assignment sync
+     */
+    private fun buildAssignmentPayload(shift: Shift, transactions: List<Transaction>): JSONObject {
+        return JSONObject().apply {
+            // Minimal shift data (just identifiers)
+            put("shift", JSONObject().apply {
+                put("shift_id", shift.shift_id)
+                put("start_time", shift.start_time)
+                put("status", shift.status)
+                put("updated_at", System.currentTimeMillis())
+            })
+
+            // Only the assigned transactions
+            put("transactions", JSONArray().apply {
+                transactions.forEach { txn ->
+                    put(JSONObject().apply {
+                        put("id", txn.id)
+                        put("mpesa_code", txn.mpesa_code)
+                        put("amount", txn.amount)
+                        put("sender_phone", txn.sender_phone ?: "")
+                        put("sender_name", txn.sender_name ?: "")
+                        put("paybill_number", txn.paybill_number ?: "")
+                        put("business_name", txn.business_name ?: "")
+                        put("timestamp", txn.timestamp)
+                        put("date_received", txn.date_received)
+                        put("time_received", txn.time_received)
+                        put("account_balance", txn.account_balance)
+                        put("transaction_cost", txn.transaction_cost)
+                        put("transaction_type", txn.transaction_type)
+                        put("shift_id", txn.shift_id ?: 0)
+                        put("assigned_to", txn.assigned_to ?: "")
+                        put("transaction_category", txn.transaction_category ?: "")
+                        put("status", txn.status)
+                        put("created_at", txn.created_at)
+                    })
+                }
+            })
+
+            // Add metadata
+            put("metadata", JSONObject().apply {
+                put("app_version", "1.0")
+                put("sync_timestamp", System.currentTimeMillis())
+                put("sync_type", "incremental") // Real-time incremental sync
                 put("device_id", android.provider.Settings.Secure.getString(
                     context.contentResolver,
                     android.provider.Settings.Secure.ANDROID_ID

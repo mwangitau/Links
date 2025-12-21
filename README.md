@@ -1,7 +1,5 @@
-
 # LINKS – Financial and Shift Management App
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Kotlin Version](https://img.shields.io/badge/Kotlin-2.0.21-blue.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-brightgreen.svg)](https://developer.android.com/jetpack/compose)
 
@@ -115,4 +113,4 @@ Contributions are welcome! If you have any ideas, suggestions, or bug reports, p
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is proprietary and not for distribution. All rights reserved.

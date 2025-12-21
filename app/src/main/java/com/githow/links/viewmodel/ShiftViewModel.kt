@@ -816,9 +816,10 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            val debtPaid = transactionDao.getTotalByShiftAndCategory(shiftId, "DEBT_PAID") ?: 0.0
-            if (debtPaid > 0) {
-                breakdown["Debt Paid"] = debtPaid
+            // Add internal transfers (negative amounts deducted from float)
+            val internalTransfers = transactionDao.getTotalByShiftAndCategory(shiftId, "INTERNAL_TRANSFER") ?: 0.0
+            if (internalTransfers != 0.0) {
+                breakdown["Internal Transfers"] = internalTransfers
             }
 
         } catch (e: Exception) {

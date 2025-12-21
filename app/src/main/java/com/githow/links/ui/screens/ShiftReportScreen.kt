@@ -99,20 +99,29 @@ fun ShiftReportScreen(
                     transactionCount = item.count,
                     transactions = shiftTransactions.filter {
                         it.assigned_to == item.name &&
-                                it.transaction_type == "RECEIVED" &&
-                                it.transaction_category != "DEBT_PAID"
+                                it.transaction_type == "RECEIVED"
                     }
                 )
             }
 
-            // Debt Paid
-            if (breakdown.debtPaid > 0) {
+            // Internal Transfers (deducted from float)
+            if (breakdown.internalTransfers < 0) {
+                item {
+                    Text(
+                        text = "Float Management",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
                 item {
                     CollectionItemCard(
-                        title = "Debt Paid",
-                        amount = breakdown.debtPaid,
-                        count = breakdown.debtCount,
-                        icon = Icons.Default.Star
+                        title = "Internal Transfers",
+                        amount = breakdown.internalTransfers,
+                        count = breakdown.internalTransferCount,
+                        icon = Icons.Default.AccountBalance,
+                        isOutflow = true
                     )
                 }
             }
@@ -123,7 +132,8 @@ fun ShiftReportScreen(
                     Text(
                         text = "Money Movements",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
 
@@ -606,8 +616,8 @@ data class CSACollection(
 
 data class ShiftBreakdown(
     val csaCollections: List<CSACollection>,
-    val debtPaid: Double,
-    val debtCount: Int,
+    val internalTransfers: Double,
+    val internalTransferCount: Int,
     val transfers: Double,
     val transferCount: Int,
     val withdrawals: Double,
@@ -625,8 +635,7 @@ private fun calculateBreakdown(
     persons.forEach { person ->
         val personTxs = transactions.filter {
             it.assigned_to == person.short_name &&
-                    it.transaction_type == "RECEIVED" &&
-                    it.transaction_category != "DEBT_PAID"  // Exclude debt from CSA totals
+                    it.transaction_type == "RECEIVED"
         }
         if (personTxs.isNotEmpty()) {
             csaCollections.add(
@@ -639,13 +648,12 @@ private fun calculateBreakdown(
         }
     }
 
-    // Debt paid - RECEIVED transactions with DEBT_PAID category
-    val debtTxs = transactions.filter {
-        it.transaction_type == "RECEIVED" &&
-                it.transaction_category == "DEBT_PAID"
+    // Internal Transfers - Money sent to other internal accounts (NEGATIVE, deducted from float)
+    val internalTransferTxs = transactions.filter {
+        it.transaction_category == "INTERNAL_TRANSFER"
     }
-    val debtPaid = debtTxs.sumOf { it.amount }
-    val debtCount = debtTxs.size
+    val internalTransfers = internalTransferTxs.sumOf { it.amount }  // Already negative
+    val internalTransferCount = internalTransferTxs.size
 
     // Transfers - Money sent to other M-PESA accounts (outflows)
     val transferTxs = transactions.filter {
@@ -665,8 +673,8 @@ private fun calculateBreakdown(
 
     return ShiftBreakdown(
         csaCollections = csaCollections.sortedByDescending { it.amount },
-        debtPaid = debtPaid,
-        debtCount = debtCount,
+        internalTransfers = internalTransfers,
+        internalTransferCount = internalTransferCount,
         transfers = transfers,
         transferCount = transferCount,
         withdrawals = withdrawals,

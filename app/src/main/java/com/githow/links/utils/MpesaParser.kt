@@ -7,8 +7,16 @@ import java.util.*
 
 /**
  * ============================================================================
- * ENHANCED M-PESA PARSER FOR LINKS APP - v2.1
+ * ENHANCED M-PESA PARSER FOR LINKS APP - v2.2
  * ============================================================================
+ *
+ * CHANGELOG v2.2:
+ * - 🔧 FIXED: SENT transactions now have NEGATIVE amounts (money going out)
+ * - 🔧 FIXED: Internal transfers detected by "Sent to" keyword (simpler!)
+ * - 🔧 FIXED: RECEIVED side of internal transfers is HIDDEN
+ * - 🔧 FIXED: SENT side shown as "INTERNAL_TRANSFER" category
+ * - 🔧 FIXED: All outgoing money (SENT, WITHDRAW, etc.) is NEGATIVE
+ * - 📊 Better reconciliation: Opening + Money IN - Money OUT = Expected Balance
  *
  * CHANGELOG v2.1:
  * - 🔧 FIXED: "Confirmed.on" format issue (M-PESA changed format Dec 2024)
@@ -18,13 +26,36 @@ import java.util.*
  * - 100% parse success rate (tested on 8,032 real messages)
  * - 11+ transaction types supported (was 4)
  * - ⚠️ CRITICAL: Detects REVERSALS (money being taken back)
+ * - ⚠️ CRITICAL: NEGATIVE amounts for money going OUT
  * - Detects SENT vs RECEIVED correctly
  * - Handles all M-PESA format variations
  * - Better error messages for debugging
  *
  * BACKWARD COMPATIBLE: Drop-in replacement for existing MpesaParser
  *
+ * INTERNAL TRANSFER DETECTION:
+ * - Any message with "Sent to" → Internal transfer (money to float)
+ * - RECEIVED side → Hidden (don't show in app)
+ * - SENT side → Visible with category "INTERNAL_TRANSFER"
+ * - Deducted from float in reconciliation
+ *
+ * AMOUNT SIGNS:
+ * ✅ POSITIVE (Money IN):
+ *    - Customer Payments
+ *    - Deposits
+ *    - Bank transfers
+ *    - Till/Paybill payments received
+ *
+ * ❌ NEGATIVE (Money OUT):
+ *    - SENT to accounts (internal or external)
+ *    - WITHDRAWALS (treated same as SENT)
+ *    - REVERSALS (customer took money back)
+ *    - AIRTIME purchases
+ *    - BILL PAYMENTS
+ *    - BUY GOODS
+ *
  * NEW TRANSACTION TYPES:
+ * ✅ INTERNAL_TRANSFER - Money sent to float accounts
  * ✅ REVERSAL - Customer took money back (CRITICAL for variance!)
  * ✅ DEPOSIT - Cash deposited at agent
  * ✅ AIRTIME - Airtime purchases (detect staff abuse)
@@ -42,22 +73,18 @@ import java.util.*
  * ✅ Paybill payments
  * ✅ Sent money (outgoing)
  * ✅ KopoPopo merchant payments
- * ✅ Internal transfers
  *
  * CRITICAL FEATURES:
- * 1. REVERSAL DETECTION - If customer forwards SMS to 456 to reverse payment,
- *    this parser detects it and makes the amount NEGATIVE
- * 2. Amount is negative for REVERSALS and SENT transactions
- * 3. Better logging with warnings for critical transactions
+ * 1. INTERNAL TRANSFER - Detected by "Sent to" keyword, not till number
+ * 2. REVERSAL DETECTION - If customer forwards SMS to 456 to reverse payment
+ * 3. Amount is negative for ALL outgoing transactions
+ * 4. Better logging with warnings for critical transactions
  *
  * ============================================================================
  */
 object MpesaParser {
 
     private const val TAG = "MPESA_PARSER"
-
-    // Your paybill numbers - customize as needed
-    private val INTERNAL_PAYBILLS = listOf("5176352", "5176338")
 
     /**
      * Parse M-PESA transaction SMS
@@ -101,11 +128,15 @@ object MpesaParser {
                 return null
             }
 
-            // CRITICAL: For reversals, amount should be NEGATIVE (money being taken back)
-            val amount = if (transactionType == "REVERSAL") {
-                -rawAmount  // Negative because customer is getting their money back
-            } else {
-                rawAmount
+            // CRITICAL: Money going OUT should be NEGATIVE
+            val amount = when (transactionType) {
+                "REVERSAL" -> -rawAmount  // Money being taken back
+                "SENT" -> -rawAmount      // Money sent to others
+                "WITHDRAW" -> -rawAmount  // Cash withdrawn
+                "AIRTIME" -> -rawAmount   // Airtime purchased
+                "BILL_PAYMENT" -> -rawAmount  // Bills paid
+                "BUY_GOODS" -> -rawAmount     // Goods purchased
+                else -> rawAmount  // RECEIVED, DEPOSIT = money IN (positive)
             }
 
             // Extract original transaction code if this is a reversal
@@ -150,14 +181,19 @@ object MpesaParser {
             // STEP 8: Check for internal transfers
             // ====================================================================
 
-            val isInternalTransfer = senderInfo.paybillNumber?.let {
-                INTERNAL_PAYBILLS.contains(it)
-            } ?: false
+            // CRITICAL: Use "Sent to" as the key indicator for internal transfers
+            // Not based on paybill number, but on the message format
+            val isInternalTransfer = messageBody.contains("Sent to", ignoreCase = true)
 
-            val isHidden = isInternalTransfer
+            // CRITICAL: For internal transfers, HIDE the RECEIVED side, SHOW the SENT side
+            val isHidden = isInternalTransfer && transactionType == "RECEIVED"
 
             if (isInternalTransfer) {
-                Log.d(TAG, "🔄 Internal transfer detected from ${senderInfo.paybillNumber} - will be hidden")
+                if (transactionType == "RECEIVED") {
+                    Log.d(TAG, "🔄 Internal transfer RECEIVED (from float) - will be HIDDEN")
+                } else if (transactionType == "SENT") {
+                    Log.d(TAG, "🔄 Internal transfer SENT (to float) - will be SHOWN as INTERNAL_TRANSFER")
+                }
             }
 
             // ====================================================================
@@ -166,14 +202,26 @@ object MpesaParser {
 
             val transactionCategory = when {
                 transactionType == "REVERSAL" -> "REVERSAL"  // Critical for variance tracking!
-                transactionType == "SENT" -> "TRANSFER"
-                transactionType == "WITHDRAW" -> "WITHDRAWAL"
+                isInternalTransfer && transactionType == "SENT" -> "INTERNAL_TRANSFER"  // Special: between your accounts
+                transactionType == "SENT" -> "WITHDRAWAL"     // Money OUT
+                transactionType == "WITHDRAW" -> "WITHDRAWAL" // Money OUT (same as SENT)
                 transactionType == "DEPOSIT" -> "DEPOSIT"
-                transactionType == "AIRTIME" -> "AIRTIME"
-                transactionType == "BILL_PAYMENT" -> "BILL_PAYMENT"
-                transactionType == "BUY_GOODS" -> "BUY_GOODS"
-                isInternalTransfer -> "INTERNAL_TRANSFER"
-                else -> null  // Will be assigned later (CSA, DEBT_PAID, etc.)
+                transactionType == "AIRTIME" -> "WITHDRAWAL"  // Money OUT
+                transactionType == "BILL_PAYMENT" -> "WITHDRAWAL"  // Money OUT
+                transactionType == "BUY_GOODS" -> "WITHDRAWAL"     // Money OUT
+                else -> null  // Will be assigned later (CSA, etc.)
+            }
+
+            // ====================================================================
+            // STEP 9.5: Auto-assign internal transfers
+            // ====================================================================
+
+            // If this is an internal transfer, auto-assign it to "Internal Transfer"
+            // This way it won't appear in "Unassigned" and goes straight to reports
+            val assignedTo = if (isInternalTransfer && transactionType == "SENT") {
+                "Internal Transfer"
+            } else {
+                null  // Will be assigned manually by user
             }
 
             // ====================================================================
@@ -183,13 +231,25 @@ object MpesaParser {
             val timestamp = convertToTimestamp(dateReceived, timeReceived)
 
             Log.d(TAG, "✅ Parsed successfully: $mpesaCode - Ksh$amount - $transactionType" +
-                    if (isHidden) " (HIDDEN)" else "")
+                    if (isHidden) " (HIDDEN)" else "" +
+                            if (assignedTo != null) " - AUTO-ASSIGNED to: $assignedTo" else "")
 
-            // CRITICAL WARNING for reversals
-            if (transactionType == "REVERSAL") {
-                Log.w(TAG, "⚠️⚠️⚠️ REVERSAL DETECTED! Money being taken back: Ksh$amount")
-                Log.w(TAG, "⚠️ Original transaction: ${originalTransactionCode ?: "Unknown"}")
-                Log.w(TAG, "⚠️ This will REDUCE your balance!")
+            // WARNING for money going OUT (negative amounts)
+            when (transactionType) {
+                "REVERSAL" -> {
+                    Log.w(TAG, "⚠️⚠️⚠️ REVERSAL DETECTED! Money being taken back: Ksh$amount")
+                    Log.w(TAG, "⚠️ Original transaction: ${originalTransactionCode ?: "Unknown"}")
+                    Log.w(TAG, "⚠️ This will REDUCE your balance!")
+                }
+                "SENT" -> {
+                    Log.w(TAG, "💸 SENT: Money going OUT - Ksh$amount")
+                }
+                "WITHDRAW" -> {
+                    Log.w(TAG, "💸 WITHDRAW: Money going OUT - Ksh$amount")
+                }
+                "AIRTIME", "BILL_PAYMENT", "BUY_GOODS" -> {
+                    Log.w(TAG, "💸 $transactionType: Money going OUT - Ksh$amount")
+                }
             }
 
             // ====================================================================
@@ -210,10 +270,11 @@ object MpesaParser {
                 transaction_cost = transactionCost,
                 sms_body = messageBody,
                 transaction_type = transactionType,
+                assigned_to = assignedTo,  // Auto-assign internal transfers
                 transaction_category = transactionCategory,
                 is_hidden = isHidden,
                 is_internal_transfer = isInternalTransfer,
-                status = "pending"
+                status = if (assignedTo != null) "assigned" else "pending"  // If auto-assigned, mark as assigned
             )
 
         } catch (e: Exception) {

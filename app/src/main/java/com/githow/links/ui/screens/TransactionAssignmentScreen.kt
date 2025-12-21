@@ -151,7 +151,7 @@ fun TransactionAssignmentScreen(
                     viewModel.assignTransactions(
                         transactionIds = selectedTransactions.toList(),
                         personName = selectedPerson!!,
-                        category = if (selectedPerson == "Debt Paid") "DEBT_PAID" else "CSA"
+                        category = "CSA"
                     )
                     selectedTransactions = setOf()
                     showAssignDialog = false
@@ -178,7 +178,7 @@ fun TransactionAssignmentScreen(
                     viewModel.reassignTransaction(
                         transactionId = transactionToEdit!!.id,
                         newPersonName = selectedPerson!!,
-                        newCategory = if (selectedPerson == "Debt Paid") "DEBT_PAID" else "CSA"
+                        newCategory = "CSA"
                     )
                     showEditDialog = false
                     transactionToEdit = null
@@ -401,7 +401,7 @@ fun AssignmentDialog(
                 )
 
                 LazyColumn {
-                    // Persons
+                    // Persons (CSAs only)
                     items(persons.filter { it.is_active }) { person ->
                         Row(
                             modifier = Modifier
@@ -419,28 +419,6 @@ fun AssignmentDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(person.short_name)
-                        }
-                    }
-
-                    // Debt Paid option
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = selectedPerson == "Debt Paid",
-                                    onClick = { onPersonSelected("Debt Paid") }
-                                )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedPerson == "Debt Paid",
-                                onClick = { onPersonSelected("Debt Paid") }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Debt Paid")
                         }
                     }
                 }
@@ -520,7 +498,7 @@ fun EditAssignmentDialog(
                 )
 
                 LazyColumn(modifier = Modifier.height(200.dp)) {
-                    // Persons
+                    // Persons (CSAs only)
                     items(persons.filter { it.is_active }) { person ->
                         Row(
                             modifier = Modifier
@@ -538,28 +516,6 @@ fun EditAssignmentDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(person.short_name)
-                        }
-                    }
-
-                    // Debt Paid option
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = currentAssignment == "Debt Paid",
-                                    onClick = { onPersonSelected("Debt Paid") }
-                                )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = currentAssignment == "Debt Paid",
-                                onClick = { onPersonSelected("Debt Paid") }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Debt Paid")
                         }
                     }
                 }

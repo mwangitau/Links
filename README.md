@@ -1,15 +1,13 @@
+
 # LINKS – Financial and Shift Management App
 
-[![Kotlin Version](https://img.shields.io/badge/Kotlin-2.0.21-blue.svg)](https://kotlinlang.org)
-[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-brightgreen.svg)](https://developer.android.com/jetpack/compose)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Kotlin Version](https://img.shields.io/badge/Kotlin-1.9.0-blue.svg)](https://kotlinlang.org)
+[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-1.6.0-brightgreen.svg)](https://developer.android.com/jetpack/compose)
 
 ## 🌟 Overview
 
 LINKS is a powerful yet intuitive Android application crafted with **Kotlin** and **Jetpack Compose**. It's designed to streamline financial tracking and shift management for small businesses. The app automatically captures and parses incoming SMS payment notifications, with a specific focus on **M-Pesa messages**, providing managers with a real-time overview of financial activities during work shifts. This enables efficient transaction assignment and monitoring, ensuring financial clarity and accountability.
-
-## 📈 Current Status
-
-This project is under active development. Recent improvements include updating to the latest Kotlin and Jetpack Compose versions, and a more robust implementation of the cloud sync feature. The focus is on creating a stable, feature-rich application for real-world use.
 
 ## ✨ Key Features
 
@@ -19,7 +17,7 @@ This project is under active development. Recent improvements include updating t
 - **📊 Real-Time Monitoring**: A dynamic dashboard (`ShiftDashboardScreen.kt`) provides a live view of both assigned and unassigned transaction totals, with updates happening in real-time.
 - **👥 Personnel Management**: A comprehensive module (`PersonManagementScreen.kt`) to add, edit, and maintain employee records, ensuring that your team's information is always up-to-date.
 - **🔒 Local Data Storage**: All data is securely stored on the device using the **Room persistence library**. The database schema is defined in `data/entity/` and accessed via DAOs in `data/dao/`. This ensures the app works perfectly offline.
-- **☁️ Robust Cloud Sync**: Securely back up your closed shifts and associated transactions to Google Sheets. The improved `CloudSyncManager.kt` now includes retry logic and error handling for more reliable data synchronization via a Google Apps Script webhook.
+- **☁️ Cloud Sync**: Sync your shift data to Google Sheets for backup and further analysis. Configure your Google Apps Script webhook URL in `CloudSyncManager.kt` to get started.
 - **🎨 Modern UI**: A clean, modern, and reactive user interface built entirely with **Jetpack Compose** and **Material 3**. The theme and color palette are defined in `ui/theme/` and `res/values/colors.xml`.
 
 ## 📂 Project Structure
@@ -68,7 +66,7 @@ app/src/main/java/com/githow/links/
 
 ### Prerequisites
 
-- Android Studio (Jellyfish | 2023.3.1 or newer recommended)
+- Android Studio (Giraffe or newer recommended)
 - An Android device or emulator
 - A Google Account to set up the Google Apps Script webhook.
 
@@ -113,4 +111,4 @@ Contributions are welcome! If you have any ideas, suggestions, or bug reports, p
 
 ## 📄 License
 
-This project is proprietary and not for distribution. All rights reserved.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

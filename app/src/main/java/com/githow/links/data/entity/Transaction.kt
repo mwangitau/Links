@@ -40,10 +40,10 @@ data class Transaction(
 
     // NEW: Shift management fields
     val shift_id: Long? = null,
-    val assigned_to: String? = null,  // "CSA 1 (John)", "Debt Paid", "Transfer", etc.
+    val assigned_to: String? = null,  // "CSA 1 (John)", "Neutral", etc.
 
     // NEW: Transaction category for reconciliation
-    val transaction_category: String? = null,  // "CSA", "DEBT_PAID", "TRANSFER", "WITHDRAWAL"
+    val transaction_category: String? = null,  // "CSA", "NEUTRAL", "TRANSFER", "WITHDRAWAL", etc.
 
     // NEW: For hiding duplicate internal transfers
     val is_hidden: Boolean = false,  // true for internal "received" SMS

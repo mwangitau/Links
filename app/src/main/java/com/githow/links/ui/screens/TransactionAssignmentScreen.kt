@@ -151,7 +151,7 @@ fun TransactionAssignmentScreen(
                     viewModel.assignTransactions(
                         transactionIds = selectedTransactions.toList(),
                         personName = selectedPerson!!,
-                        category = "CSA"
+                        category = if (selectedPerson == "Neutral") "NEUTRAL" else "CSA"
                     )
                     selectedTransactions = setOf()
                     showAssignDialog = false
@@ -178,7 +178,7 @@ fun TransactionAssignmentScreen(
                     viewModel.reassignTransaction(
                         transactionId = transactionToEdit!!.id,
                         newPersonName = selectedPerson!!,
-                        newCategory = "CSA"
+                        newCategory = if (selectedPerson == "Neutral") "NEUTRAL" else "CSA"
                     )
                     showEditDialog = false
                     transactionToEdit = null
@@ -421,6 +421,28 @@ fun AssignmentDialog(
                             Text(person.short_name)
                         }
                     }
+
+                    // Neutral option
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = selectedPerson == "Neutral",
+                                    onClick = { onPersonSelected("Neutral") }
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedPerson == "Neutral",
+                                onClick = { onPersonSelected("Neutral") }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Neutral")
+                        }
+                    }
                 }
             }
         },
@@ -516,6 +538,28 @@ fun EditAssignmentDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(person.short_name)
+                        }
+                    }
+
+                    // Neutral option
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = currentAssignment == "Neutral",
+                                    onClick = { onPersonSelected("Neutral") }
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = currentAssignment == "Neutral",
+                                onClick = { onPersonSelected("Neutral") }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Neutral")
                         }
                     }
                 }

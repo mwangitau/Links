@@ -178,21 +178,41 @@ object MpesaParser {
             val senderInfo = extractSenderInfo(messageBody, transactionType)
 
             // ====================================================================
-            // STEP 8: Check for internal transfers
+            // STEP 8: Check for settlements and internal transfers
             // ====================================================================
 
-            // CRITICAL: Use "Sent to" as the key indicator for internal transfers
-            // Not based on paybill number, but on the message format
-            val isInternalTransfer = messageBody.contains("Sent to", ignoreCase = true)
+            // SETTLEMENT DETECTION - These are internal money movements
+            // Rule 1: "received as settlement" = HIDE (duplicate message, not real money IN)
+            // Rule 2: "settled to" or "Sent to" = Money OUT, auto-assign to Neutral
 
-            // CRITICAL: For internal transfers, HIDE the RECEIVED side, SHOW the SENT side
-            val isHidden = isInternalTransfer && transactionType == "RECEIVED"
+            val isSettlementReceived = messageBody.contains("received as settlement", ignoreCase = true)
+            val isSettlementSent = messageBody.contains("settled to", ignoreCase = true) ||
+                    messageBody.contains("Sent to", ignoreCase = true)
+
+            // INTERNAL_PAYBILLS: Your business paybill numbers
+            val INTERNAL_PAYBILLS = listOf("5176352", "5176338")
+
+            // Check if this is an internal transfer or settlement
+            val isInternalTransfer = when {
+                isSettlementReceived -> true  // Settlement received (will be hidden)
+                isSettlementSent -> true      // Settlement sent (money OUT)
+                transactionType == "SENT" && messageBody.contains("Sent to", ignoreCase = true) -> true
+                transactionType == "RECEIVED" -> senderInfo.paybillNumber?.let {
+                    INTERNAL_PAYBILLS.contains(it)  // RECEIVED from internal paybill
+                } ?: false
+                else -> false
+            }
+
+            // HIDING LOGIC:
+            // ALWAYS hide "received as settlement" messages - they're duplicates
+            val isHidden = isSettlementReceived
 
             if (isInternalTransfer) {
-                if (transactionType == "RECEIVED") {
-                    Log.d(TAG, "🔄 Internal transfer RECEIVED (from float) - will be HIDDEN")
-                } else if (transactionType == "SENT") {
-                    Log.d(TAG, "🔄 Internal transfer SENT (to float) - will be SHOWN as INTERNAL_TRANSFER")
+                when {
+                    isSettlementReceived -> Log.d(TAG, "🔄 Settlement RECEIVED - will be HIDDEN (duplicate)")
+                    isSettlementSent -> Log.d(TAG, "🔄 Settlement SENT - will be NEUTRAL (money OUT)")
+                    transactionType == "RECEIVED" -> Log.d(TAG, "🔄 Internal transfer RECEIVED - will be NEUTRAL")
+                    transactionType == "SENT" -> Log.d(TAG, "🔄 Internal transfer SENT - will be NEUTRAL")
                 }
             }
 
@@ -202,7 +222,7 @@ object MpesaParser {
 
             val transactionCategory = when {
                 transactionType == "REVERSAL" -> "REVERSAL"  // Critical for variance tracking!
-                isInternalTransfer && transactionType == "SENT" -> "INTERNAL_TRANSFER"  // Special: between your accounts
+                isInternalTransfer -> "NEUTRAL"  // Internal transfers - don't affect reconciliation
                 transactionType == "SENT" -> "WITHDRAWAL"     // Money OUT
                 transactionType == "WITHDRAW" -> "WITHDRAWAL" // Money OUT (same as SENT)
                 transactionType == "DEPOSIT" -> "DEPOSIT"
@@ -213,13 +233,12 @@ object MpesaParser {
             }
 
             // ====================================================================
-            // STEP 9.5: Auto-assign internal transfers
+            // STEP 9.5: Auto-assign internal transfers as NEUTRAL
             // ====================================================================
 
-            // If this is an internal transfer, auto-assign it to "Internal Transfer"
-            // This way it won't appear in "Unassigned" and goes straight to reports
-            val assignedTo = if (isInternalTransfer && transactionType == "SENT") {
-                "Internal Transfer"
+            // Auto-assign both sides of internal transfers to "Neutral"
+            val assignedTo = if (isInternalTransfer) {
+                "Neutral"
             } else {
                 null  // Will be assigned manually by user
             }

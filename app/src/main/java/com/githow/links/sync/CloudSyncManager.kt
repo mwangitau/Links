@@ -22,7 +22,7 @@ class CloudSyncManager(private val context: Context) {
         // TODO: Replace with your actual Google Apps Script webhook URL
         private const val WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyMiJudd8CGRrYm7_btLxj6rOycte6HbrGgAmLd6W8z6OLQ1WrVETiG2zWQU46XH_yM/exec"
 
-        private const val TIMEOUT_SECONDS = 30L
+        private const val TIMEOUT_SECONDS = 90L  // Increased from 30s to 90s for large shifts
         private const val MAX_RETRIES = 3
     }
 

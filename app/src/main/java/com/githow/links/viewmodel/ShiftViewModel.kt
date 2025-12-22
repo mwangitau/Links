@@ -244,9 +244,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 // Expected total: (closing - opening) + withdrawals
                 val expectedTotal = (closingBalance - shift.open_balance) + totalWithdrawals
 
-                // Actual total: sum of all assignments
+                // Actual total: sum of all assignments EXCLUDING NEUTRAL (internal transfers)
                 val actualTotal = shiftTransactions
-                    .filter { transaction -> !transaction.assigned_to.isNullOrBlank() }
+                    .filter { transaction ->
+                        !transaction.assigned_to.isNullOrBlank() &&
+                                transaction.transaction_category != "NEUTRAL"  // Exclude neutral transactions
+                    }
                     .sumOf { transaction -> transaction.amount }
 
                 val difference = expectedTotal - actualTotal
@@ -513,8 +516,13 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                 val expectedTotal = (closeBalance + withdrawals + transfers) - shift.open_balance
 
+                // Calculate actual total - EXCLUDE NEUTRAL transactions (internal transfers)
                 val shiftTransactions = transactionDao.getAllTransactions()
-                    .filter { it.shift_id == shift.shift_id && it.assigned_to != null }
+                    .filter {
+                        it.shift_id == shift.shift_id &&
+                                it.assigned_to != null &&
+                                it.transaction_category != "NEUTRAL"  // Exclude neutral transactions
+                    }
                 val actualTotal = shiftTransactions.sumOf { it.amount }
 
                 val difference = expectedTotal - actualTotal
@@ -817,9 +825,9 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // Add internal transfers (negative amounts deducted from float)
-            val internalTransfers = transactionDao.getTotalByShiftAndCategory(shiftId, "INTERNAL_TRANSFER") ?: 0.0
+            val internalTransfers = transactionDao.getTotalByShiftAndCategory(shiftId, "NEUTRAL") ?: 0.0
             if (internalTransfers != 0.0) {
-                breakdown["Internal Transfers"] = internalTransfers
+                breakdown["Neutral Transactions"] = internalTransfers
             }
 
         } catch (e: Exception) {

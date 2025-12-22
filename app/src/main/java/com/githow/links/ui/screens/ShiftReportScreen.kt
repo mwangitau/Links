@@ -104,11 +104,11 @@ fun ShiftReportScreen(
                 )
             }
 
-            // Internal Transfers (deducted from float)
-            if (breakdown.internalTransfers < 0) {
+            // Internal Transfers (Neutral - don't affect reconciliation)
+            if (breakdown.internalTransferCount > 0) {
                 item {
                     Text(
-                        text = "Float Management",
+                        text = "Neutral Transactions",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 8.dp)
@@ -117,11 +117,11 @@ fun ShiftReportScreen(
 
                 item {
                     CollectionItemCard(
-                        title = "Internal Transfers",
+                        title = "Internal Transfers (Net)",
                         amount = breakdown.internalTransfers,
                         count = breakdown.internalTransferCount,
-                        icon = Icons.Default.AccountBalance,
-                        isOutflow = true
+                        icon = Icons.Default.Send,
+                        isOutflow = breakdown.internalTransfers < 0
                     )
                 }
             }
@@ -632,10 +632,12 @@ private fun calculateBreakdown(
     val csaCollections = mutableListOf<CSACollection>()
 
     // Only include RECEIVED transactions that are assigned to CSAs (collections)
+    // Exclude NEUTRAL transactions (internal transfers that don't affect reconciliation)
     persons.forEach { person ->
         val personTxs = transactions.filter {
             it.assigned_to == person.short_name &&
-                    it.transaction_type == "RECEIVED"
+                    it.transaction_type == "RECEIVED" &&
+                    it.transaction_category != "NEUTRAL"  // Exclude neutral transactions
         }
         if (personTxs.isNotEmpty()) {
             csaCollections.add(
@@ -648,11 +650,13 @@ private fun calculateBreakdown(
         }
     }
 
-    // Internal Transfers - Money sent to other internal accounts (NEGATIVE, deducted from float)
+    // Internal Transfers - Money sent to other internal accounts (auto-assigned as Neutral)
+    // SENT side is negative (money OUT), RECEIVED side is positive (money IN)
+    // They cancel out, so we just track them for visibility
     val internalTransferTxs = transactions.filter {
-        it.transaction_category == "INTERNAL_TRANSFER"
+        it.transaction_category == "NEUTRAL"
     }
-    val internalTransfers = internalTransferTxs.sumOf { it.amount }  // Already negative
+    val internalTransfers = internalTransferTxs.sumOf { it.amount }  // SENT is negative, RECEIVED is positive
     val internalTransferCount = internalTransferTxs.size
 
     // Transfers - Money sent to other M-PESA accounts (outflows)

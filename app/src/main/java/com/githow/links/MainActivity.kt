@@ -5,193 +5,248 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp  // ✅ ADDED
 import androidx.core.content.ContextCompat
-import com.githow.links.ui.screens.*
-import com.githow.links.ui.theme.LINKSTheme
-import com.githow.links.viewmodel.ShiftViewModel
-import com.githow.links.viewmodel.TransactionViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.githow.links.ui.theme.LINKSTheme  // ✅ CHANGED from LinksTheme
+import com.githow.links.ui.screens.ManualReviewScreen  // ✅ ADDED
+import com.githow.links.viewmodel.ManualReviewViewModel
 
 class MainActivity : ComponentActivity() {
 
-    private val transactionViewModel: TransactionViewModel by viewModels()
-    private val shiftViewModel: ShiftViewModel by viewModels()
+    companion object {
+        private const val TAG = "LINKS"
+    }
 
-    private val permissionLauncher = registerForActivityResult(
+    // Permission launcher
+    private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = permissions.entries.all { it.value }
+        val allGranted = permissions.values.all { it }
         if (allGranted) {
-            Log.d("LINKS", "✅ All permissions granted!")
-            Toast.makeText(this, "LINKS is ready!", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "✅ All permissions granted!")
         } else {
-            Log.e("LINKS", "❌ Some permissions denied!")
-            Toast.makeText(this, "SMS permissions required!", Toast.LENGTH_LONG).show()
+            Log.w(TAG, "⚠️ Some permissions denied")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
 
-        requestSmsPermissions()
+        // Check and request permissions
+        checkPermissions()
 
         setContent {
-            LINKSTheme {
-                LINKSApp(
-                    transactionViewModel = transactionViewModel,
-                    shiftViewModel = shiftViewModel
-                )
+            LINKSTheme {  // ✅ CHANGED from LinksTheme
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    MainScreen()
+                }
             }
         }
     }
 
-    private fun requestSmsPermissions() {
-        val permissionsToRequest = mutableListOf(
-            Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.READ_SMS
-        )
+    private fun checkPermissions() {
+        val permissions = mutableListOf<String>()
 
+        // SMS permissions
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECEIVE_SMS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions.add(Manifest.permission.RECEIVE_SMS)
+        }
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_SMS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions.add(Manifest.permission.READ_SMS)
+        }
+
+        // Notification permission (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
 
-        val permissionsNeeded = permissionsToRequest.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (permissionsNeeded.isNotEmpty()) {
-            Log.d("LINKS", "🔐 Requesting permissions")
-            permissionLauncher.launch(permissionsNeeded.toTypedArray())
+        if (permissions.isNotEmpty()) {
+            requestPermissionLauncher.launch(permissions.toTypedArray())
         } else {
-            Log.d("LINKS", "✅ All permissions already granted!")
+            Log.d(TAG, "✅ All permissions already granted!")
         }
     }
 }
 
 @Composable
-fun LINKSApp(
-    transactionViewModel: TransactionViewModel,
-    shiftViewModel: ShiftViewModel
-) {
+fun MainScreen() {
     var selectedTab by remember { mutableIntStateOf(0) }
-    var currentScreen by remember { mutableStateOf("main") }
-    var selectedShiftId by remember { mutableStateOf<Long?>(null) }
+    val manualReviewViewModel: ManualReviewViewModel = viewModel()
 
-    // Handle sub-screens
-    when (currentScreen) {
-        "assignment" -> {
-            TransactionAssignmentScreen(
-                viewModel = shiftViewModel,
-                onNavigateBack = { currentScreen = "main" }
-            )
-            return
-        }
-        "persons" -> {
-            PersonManagementScreen(
-                viewModel = shiftViewModel,
-                onNavigateBack = { currentScreen = "main" }
-            )
-            return
-        }
-        "shift_summary" -> {
-            ShiftSummaryScreen(
-                viewModel = shiftViewModel,
-                onNavigateBack = { currentScreen = "main" }
-            )
-            return
-        }
-        "shift_history" -> {
-            ClosedShiftsHistoryScreen(
-                viewModel = shiftViewModel,
-                onNavigateBack = { currentScreen = "main" },
-                onViewShiftDetails = { shiftId ->
-                    selectedShiftId = shiftId
-                    currentScreen = "shift_report"
-                }
-            )
-            return
-        }
-        "shift_report" -> {
-            selectedShiftId?.let { shiftId ->
-                ShiftReportScreen(
-                    shiftId = shiftId,
-                    viewModel = shiftViewModel,
-                    onNavigateBack = {
-                        currentScreen = "shift_history"
-                        selectedShiftId = null
-                    }
-                )
-            }
-            return
-        }
-        "open_shift" -> {
-            OpenShiftScreen(
-                viewModel = shiftViewModel,
-                onNavigateBack = { currentScreen = "main" }
-            )
-            return
-        }
-        "close_shift" -> {
-            CloseShiftScreen(
-                viewModel = shiftViewModel,
-                onNavigateBack = { currentScreen = "main" }
-            )
-            return
-        }
-    }
-
-    // Main screens with bottom navigation
     Scaffold(
         bottomBar = {
             NavigationBar {
+                // Home Tab
                 NavigationBarItem(
-                    icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                    label = { Text("Transactions") },
+                    icon = { Icon(Icons.Default.Home, "Home") },
+                    label = { Text("Home") },
                     selected = selectedTab == 0,
-                    onClick = {
-                        selectedTab = 0
-                        currentScreen = "main"
-                    }
+                    onClick = { selectedTab = 0 }
                 )
+
+                // Transactions Tab
                 NavigationBarItem(
-                    icon = { Icon(Icons.Default.DateRange, contentDescription = null) },
-                    label = { Text("Shifts") },
+                    icon = { Icon(Icons.Default.List, "Transactions") },
+                    label = { Text("Transactions") },
                     selected = selectedTab == 1,
-                    onClick = {
-                        selectedTab = 1
-                        currentScreen = "main"
-                    }
+                    onClick = { selectedTab = 1 }
+                )
+
+                // Manual Review Tab (NEW!)
+                NavigationBarItem(
+                    icon = {
+                        val pendingCount by manualReviewViewModel.pendingCount.collectAsState()
+                        BadgedBox(
+                            badge = {
+                                if (pendingCount > 0) {
+                                    Badge { Text("$pendingCount") }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Warning, "Review")
+                        }
+                    },
+                    label = { Text("Review") },
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 }
+                )
+
+                // SMS Tab
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Email, "SMS") },
+                    label = { Text("SMS") },
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 }
+                )
+
+                // Settings Tab
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Settings, "Settings") },
+                    label = { Text("Settings") },
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 }
                 )
             }
         }
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues)) {
             when (selectedTab) {
-                0 -> TransactionListScreen(viewModel = transactionViewModel)
-                1 -> ShiftDashboardScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateToOpenShift = { currentScreen = "open_shift" },
-                    onNavigateToCloseShift = { currentScreen = "close_shift" },
-                    onNavigateToAssignTransactions = { currentScreen = "assignment" },
-                    onNavigateToManageCSAs = { currentScreen = "persons" },
-                    onNavigateToShiftSummary = { currentScreen = "shift_summary" },
-                    onNavigateToHistory = { currentScreen = "shift_history" }
+                0 -> HomeScreen()
+                1 -> TransactionsScreen()
+                2 -> ManualReviewScreen(
+                    viewModel = manualReviewViewModel,
+                    onNavigateBack = { selectedTab = 0 }
                 )
+                3 -> SmsScreen()
+                4 -> SettingsScreen()
             }
         }
+    }
+}
+
+// Placeholder screens - Replace these with your actual screens!
+
+@Composable
+fun HomeScreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "LINKS - M-PESA Manager",
+            style = MaterialTheme.typography.headlineMedium
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Welcome to LINKS v3.0!", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("New Feature: Manual Review System")
+                Text("• Review unparsed M-PESA SMS")
+                Text("• Supervisor password protection")
+                Text("• Manual transaction entry")
+            }
+        }
+    }
+}
+
+@Composable
+fun TransactionsScreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Transactions",
+            style = MaterialTheme.typography.headlineMedium
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Your transaction list will appear here")
+        // TODO: Add your TransactionViewModel and list
+    }
+}
+
+@Composable
+fun SmsScreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "SMS History",
+            style = MaterialTheme.typography.headlineMedium
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Your SMS history will appear here")
+        // TODO: Add your SMS list
+    }
+}
+
+@Composable
+fun SettingsScreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Settings",
+            style = MaterialTheme.typography.headlineMedium
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("App settings will appear here")
+        // TODO: Add your settings options
     }
 }

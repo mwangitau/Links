@@ -13,15 +13,25 @@ import androidx.room.Index
             parentColumns = ["shift_id"],
             childColumns = ["shift_id"],
             onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = RawSms::class,
+            parentColumns = ["id"],
+            childColumns = ["raw_sms_id"],
+            onDelete = ForeignKey.SET_NULL
         )
     ],
-    indices = [Index("shift_id"), Index("mpesa_code")]
+    indices = [
+        Index("shift_id"),
+        Index("mpesa_code", unique = true),
+        Index("raw_sms_id"),
+        Index("entry_source")
+    ]
 )
 data class Transaction(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-
-    // Basic transaction info
+    val raw_sms_id: Long? = null,
     val mpesa_code: String,
     val amount: Double,
     val sender_phone: String?,
@@ -34,23 +44,30 @@ data class Transaction(
     val account_balance: Double,
     val transaction_cost: Double,
     val sms_body: String? = null,
-
-    // Transaction type: RECEIVED, SENT, WITHDRAW
     val transaction_type: String,
-
-    // NEW: Shift management fields
     val shift_id: Long? = null,
-    val assigned_to: String? = null,  // "CSA 1 (John)", "Neutral", etc.
-
-    // NEW: Transaction category for reconciliation
-    val transaction_category: String? = null,  // "CSA", "NEUTRAL", "TRANSFER", "WITHDRAWAL", etc.
-
-    // NEW: For hiding duplicate internal transfers
-    val is_hidden: Boolean = false,  // true for internal "received" SMS
-    val is_internal_transfer: Boolean = false,  // true if from own paybill
-
-    // Status and sync
-    val status: String = "pending",  // "pending", "assigned", "reconciled"
+    val assigned_to: String? = null,
+    val transaction_category: String? = null,
+    val is_hidden: Boolean = false,
+    val is_internal_transfer: Boolean = false,
+    val entry_source: EntrySource = EntrySource.AUTO_PARSED,
+    val status: String = "pending",
     val created_at: Long = System.currentTimeMillis(),
     val synced_at: Long? = null
 )
+
+enum class EntrySource {
+    AUTO_PARSED,
+    MANUAL_SUPERVISOR
+}
+
+fun Transaction.isManuallyEntered(): Boolean {
+    return entry_source == EntrySource.MANUAL_SUPERVISOR
+}
+
+fun Transaction.getEntrySourceDisplay(): String {
+    return when (entry_source) {
+        EntrySource.AUTO_PARSED -> "Auto"
+        EntrySource.MANUAL_SUPERVISOR -> "Manual"
+    }
+}

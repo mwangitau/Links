@@ -10,9 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.githow.links.data.database.LinksDatabase
 import com.githow.links.viewmodel.ShiftViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -24,8 +26,13 @@ fun ShiftReportScreen(
     viewModel: ShiftViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val shift by viewModel.getShiftByIdLive(shiftId).observeAsState()
-    val shiftTransactions by viewModel.getShiftTransactions(shiftId).observeAsState(emptyList())
+    // Get database instance to access DAOs directly
+    val context = LocalContext.current
+    val database = remember { LinksDatabase.getDatabase(context) }
+
+    // Use DAO methods directly since ShiftViewModel doesn't have getShiftByIdLive
+    val shift by database.shiftDao().getShiftByIdLive(shiftId).observeAsState()
+    val shiftTransactions by database.transactionDao().getTransactionsByShiftId(shiftId).observeAsState(emptyList())
     val persons by viewModel.persons.observeAsState(emptyList())
 
     // Calculate breakdown
@@ -162,12 +169,12 @@ fun ShiftReportScreen(
                 }
             }
 
-            // Reconciliation Card
+            // Reconciliation Card - FIXED: Use correct field names
             item {
                 ReconciliationCard(
-                    expected = shift!!.expected_total,
-                    actual = shift!!.actual_total,
-                    difference = shift!!.difference
+                    expected = shift!!.expected_receipts ?: 0.0,
+                    actual = shift!!.actual_receipts ?: 0.0,
+                    difference = shift!!.variance ?: 0.0
                 )
             }
         }
@@ -205,18 +212,18 @@ fun ShiftReportHeaderCard(shift: com.githow.links.data.entity.Shift) {
                     )
                 }
                 Surface(
-                    color = if (shift.difference == 0.0)
+                    color = if ((shift.variance ?: 0.0) == 0.0)
                         MaterialTheme.colorScheme.primary
                     else
                         MaterialTheme.colorScheme.error,
                     shape = MaterialTheme.shapes.small
                 ) {
                     Text(
-                        text = if (shift.difference == 0.0) "BALANCED" else "DISCREPANCY",
+                        text = if ((shift.variance ?: 0.0) == 0.0) "BALANCED" else "DISCREPANCY",
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (shift.difference == 0.0)
+                        color = if ((shift.variance ?: 0.0) == 0.0)
                             MaterialTheme.colorScheme.onPrimary
                         else
                             MaterialTheme.colorScheme.onError
@@ -268,7 +275,7 @@ fun BalanceSummaryCard(shift: com.githow.links.data.entity.Shift) {
             // Total Collected
             BalanceRow(
                 label = "Total Collected",
-                amount = shift.actual_total,
+                amount = shift.actual_receipts ?: 0.0,
                 isHighlight = true
             )
         }

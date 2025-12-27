@@ -7,8 +7,14 @@ import java.util.*
 
 /**
  * ============================================================================
- * ENHANCED M-PESA PARSER FOR LINKS APP - v2.2
+ * ENHANCED M-PESA PARSER FOR LINKS APP - v2.3
  * ============================================================================
+ *
+ * CHANGELOG v2.3:
+ * - 🔧 FIXED: "PMKsh" format parsing (no space between PM and Ksh)
+ * - 🔧 FIXED: extractTime() now properly handles "4:21 PMKsh184.00" format
+ * - Captures time and AM/PM separately to prevent greedy matching
+ * - Now handles CATHERINE WAITHERERO MWANGI transaction correctly
  *
  * CHANGELOG v2.2:
  * - 🔧 FIXED: SENT transactions now have NEGATIVE amounts (money going out)
@@ -477,11 +483,19 @@ object MpesaParser {
     /**
      * Extract time from message
      * Handles formats: "at 4:59 PM", "at 8:8 AM" (single digit minute), "at 1:07 PMKsh" (no space after PM)
+     *
+     * 🔧 FIXED v2.3: Now properly handles "PMKsh" format by capturing time and AM/PM separately
      */
     private fun extractTime(message: String): String? {
-        // Use word boundary or lookahead to stop at PM/AM without capturing what follows
-        val timeRegex = """at\s+(\d{1,2}:\d{1,2}\s*[AP]M)(?=\s|K|$)""".toRegex(RegexOption.IGNORE_CASE)
-        return timeRegex.find(message)?.groupValues?.get(1)
+        // Capture time and AM/PM separately to prevent greedy matching
+        val timeRegex = """at\s+(\d{1,2}:\d{1,2})\s*([AP]M)""".toRegex(RegexOption.IGNORE_CASE)
+        val match = timeRegex.find(message)
+        return if (match != null) {
+            // Combine time and AM/PM with a space
+            "${match.groupValues[1]} ${match.groupValues[2]}"
+        } else {
+            null
+        }
     }
 
     /**

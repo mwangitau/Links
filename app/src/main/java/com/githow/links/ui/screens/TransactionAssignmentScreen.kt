@@ -45,18 +45,8 @@ fun TransactionAssignmentScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                actions = {
-                    // Refresh button
-                    IconButton(onClick = {
-                        viewModel.refreshTransactions()
-                    }) {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "Refresh",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                },
+                // REMOVED: Refresh button since refreshTransactions() doesn't exist
+                // The LiveData observables will automatically update when data changes
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )

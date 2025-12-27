@@ -22,7 +22,7 @@ import com.githow.links.data.dao.RawSmsDao
         ShiftAssignment::class,
         RawSms::class
     ],
-    version = 4,  // Increment for FROZEN status queries update
+    version = 5,  // ← UPDATED: New reconciliation fields
     exportSchema = false
 )
 abstract class LinksDatabase : RoomDatabase() {
@@ -43,7 +43,7 @@ abstract class LinksDatabase : RoomDatabase() {
                     LinksDatabase::class.java,
                     "links_database"
                 )
-                    .fallbackToDestructiveMigration()  // For development - recreates DB on version change
+                    .fallbackToDestructiveMigration()  // Recreates DB on version change
                     .build()
                 INSTANCE = instance
                 instance

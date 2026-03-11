@@ -5,89 +5,7 @@ import com.githow.links.data.entity.Transaction
 import java.text.SimpleDateFormat
 import java.util.*
 
-/**
- * ============================================================================
- * ENHANCED M-PESA PARSER FOR LINKS APP - v2.3
- * ============================================================================
- *
- * CHANGELOG v2.3:
- * - 🔧 FIXED: "PMKsh" format parsing (no space between PM and Ksh)
- * - 🔧 FIXED: extractTime() now properly handles "4:21 PMKsh184.00" format
- * - Captures time and AM/PM separately to prevent greedy matching
- * - Now handles CATHERINE WAITHERERO MWANGI transaction correctly
- *
- * CHANGELOG v2.2:
- * - 🔧 FIXED: SENT transactions now have NEGATIVE amounts (money going out)
- * - 🔧 FIXED: Internal transfers detected by "Sent to" keyword (simpler!)
- * - 🔧 FIXED: RECEIVED side of internal transfers is HIDDEN
- * - 🔧 FIXED: SENT side shown as "INTERNAL_TRANSFER" category
- * - 🔧 FIXED: All outgoing money (SENT, WITHDRAW, etc.) is NEGATIVE
- * - 📊 Better reconciliation: Opening + Money IN - Money OUT = Expected Balance
- *
- * CHANGELOG v2.1:
- * - 🔧 FIXED: "Confirmed.on" format issue (M-PESA changed format Dec 2024)
- * - Now handles both "Confirmed on" and "Confirmed.on"
- *
- * Improvements over v1.0:
- * - 100% parse success rate (tested on 8,032 real messages)
- * - 11+ transaction types supported (was 4)
- * - ⚠️ CRITICAL: Detects REVERSALS (money being taken back)
- * - ⚠️ CRITICAL: NEGATIVE amounts for money going OUT
- * - Detects SENT vs RECEIVED correctly
- * - Handles all M-PESA format variations
- * - Better error messages for debugging
- *
- * BACKWARD COMPATIBLE: Drop-in replacement for existing MpesaParser
- *
- * INTERNAL TRANSFER DETECTION:
- * - Any message with "Sent to" → Internal transfer (money to float)
- * - RECEIVED side → Hidden (don't show in app)
- * - SENT side → Visible with category "INTERNAL_TRANSFER"
- * - Deducted from float in reconciliation
- *
- * AMOUNT SIGNS:
- * ✅ POSITIVE (Money IN):
- *    - Customer Payments
- *    - Deposits
- *    - Bank transfers
- *    - Till/Paybill payments received
- *
- * ❌ NEGATIVE (Money OUT):
- *    - SENT to accounts (internal or external)
- *    - WITHDRAWALS (treated same as SENT)
- *    - REVERSALS (customer took money back)
- *    - AIRTIME purchases
- *    - BILL PAYMENTS
- *    - BUY GOODS
- *
- * NEW TRANSACTION TYPES:
- * ✅ INTERNAL_TRANSFER - Money sent to float accounts
- * ✅ REVERSAL - Customer took money back (CRITICAL for variance!)
- * ✅ DEPOSIT - Cash deposited at agent
- * ✅ AIRTIME - Airtime purchases (detect staff abuse)
- * ✅ BILL_PAYMENT - Outgoing bill payments
- * ✅ BUY_GOODS - Lipa na M-PESA purchases
- *
- * Existing transaction types:
- * ✅ Customer Payments (254... phone)
- * ✅ Bonga Everywhere Services
- * ✅ B2C Payments (LOOP, TENDE, etc.)
- * ✅ Merchant Till payments
- * ✅ CO-OP TO TILL
- * ✅ Bank to Till (NCBA, I&M, etc.)
- * ✅ PesaPal
- * ✅ Paybill payments
- * ✅ Sent money (outgoing)
- * ✅ KopoPopo merchant payments
- *
- * CRITICAL FEATURES:
- * 1. INTERNAL TRANSFER - Detected by "Sent to" keyword, not till number
- * 2. REVERSAL DETECTION - If customer forwards SMS to 456 to reverse payment
- * 3. Amount is negative for ALL outgoing transactions
- * 4. Better logging with warnings for critical transactions
- *
- * ============================================================================
- */
+
 object MpesaParser {
 
     private const val TAG = "MPESA_PARSER"
@@ -98,40 +16,49 @@ object MpesaParser {
      */
     fun parseTransaction(messageBody: String): Transaction? {
         try {
-            Log.d(TAG, "📝 Parsing: ${messageBody.take(200)}")
+            // ====================================================================
+            // NEW v2.4: SANITIZE INPUT FIRST
+            // Removes malformed characters, trailing commas, excess whitespace
+            // ====================================================================
+            val cleanedMessage = sanitizeInput(messageBody)
+
+            Log.d(TAG, "📝 Parsing: ${cleanedMessage.take(200)}")
 
             // ====================================================================
             // STEP 1: Validate M-PESA message
             // ====================================================================
 
-            if (!isValidMpesaMessage(messageBody)) {
+            if (!isValidMpesaMessage(cleanedMessage)) {
                 Log.e(TAG, "❌ Not a valid M-PESA message")
-                return null
+                // NEW v2.4: Try truncated parsing as fallback
+                return tryTruncatedParsing(messageBody)
             }
 
             // ====================================================================
             // STEP 2: Extract M-PESA transaction code
             // ====================================================================
 
-            val mpesaCode = extractTransactionCode(messageBody) ?: run {
+            val mpesaCode = extractTransactionCode(cleanedMessage) ?: run {
                 Log.e(TAG, "❌ No M-PESA code found")
-                return null
+                // NEW v2.4: Try truncated parsing as fallback
+                return tryTruncatedParsing(messageBody)
             }
 
             // ====================================================================
             // STEP 3: Determine transaction type (SENT vs RECEIVED)
             // ====================================================================
 
-            val transactionType = determineTransactionType(messageBody)
+            val transactionType = determineTransactionType(cleanedMessage)
             Log.d(TAG, "📊 Transaction type: $transactionType")
 
             // ====================================================================
             // STEP 4: Extract amount
             // ====================================================================
 
-            val rawAmount = extractAmount(messageBody, transactionType) ?: run {
-                Log.e(TAG, "❌ No amount found in: $messageBody")
-                return null
+            val rawAmount = extractAmount(cleanedMessage, transactionType) ?: run {
+                Log.e(TAG, "❌ No amount found in: $cleanedMessage")
+                // NEW v2.4: Try truncated parsing as fallback
+                return tryTruncatedParsing(messageBody)
             }
 
             // CRITICAL: Money going OUT should be NEGATIVE
@@ -147,7 +74,7 @@ object MpesaParser {
 
             // Extract original transaction code if this is a reversal
             val originalTransactionCode = if (transactionType == "REVERSAL") {
-                extractReversalTransactionCode(messageBody)
+                extractReversalTransactionCode(cleanedMessage)
             } else {
                 null
             }
@@ -156,32 +83,32 @@ object MpesaParser {
             // STEP 5: Extract date and time
             // ====================================================================
 
-            val dateReceived = extractDate(messageBody) ?: run {
+            val dateReceived = extractDate(cleanedMessage) ?: run {
                 Log.e(TAG, "❌ No date found")
-                return null
+                return tryTruncatedParsing(messageBody)
             }
 
-            val timeReceived = extractTime(messageBody) ?: run {
+            val timeReceived = extractTime(cleanedMessage) ?: run {
                 Log.e(TAG, "❌ No time found")
-                return null
+                return tryTruncatedParsing(messageBody)
             }
 
             // ====================================================================
             // STEP 6: Extract balance and cost
             // ====================================================================
 
-            val accountBalance = extractBalance(messageBody)
+            val accountBalance = extractBalance(cleanedMessage)
             if (accountBalance == 0.0) {
                 Log.w(TAG, "⚠️ No balance found or balance is 0")
             }
 
-            val transactionCost = extractTransactionCost(messageBody)
+            val transactionCost = extractTransactionCost(cleanedMessage)
 
             // ====================================================================
             // STEP 7: Extract sender/recipient information
             // ====================================================================
 
-            val senderInfo = extractSenderInfo(messageBody, transactionType)
+            val senderInfo = extractSenderInfo(cleanedMessage, transactionType)
 
             // ====================================================================
             // STEP 8: Check for settlements and internal transfers
@@ -191,9 +118,9 @@ object MpesaParser {
             // Rule 1: "received as settlement" = HIDE (duplicate message, not real money IN)
             // Rule 2: "settled to" or "Sent to" = Money OUT, auto-assign to Neutral
 
-            val isSettlementReceived = messageBody.contains("received as settlement", ignoreCase = true)
-            val isSettlementSent = messageBody.contains("settled to", ignoreCase = true) ||
-                    messageBody.contains("Sent to", ignoreCase = true)
+            val isSettlementReceived = cleanedMessage.contains("received as settlement", ignoreCase = true)
+            val isSettlementSent = cleanedMessage.contains("settled to", ignoreCase = true) ||
+                    cleanedMessage.contains("Sent to", ignoreCase = true)
 
             // INTERNAL_PAYBILLS: Your business paybill numbers
             val INTERNAL_PAYBILLS = listOf("5176352", "5176338")
@@ -305,7 +232,10 @@ object MpesaParser {
         } catch (e: Exception) {
             Log.e(TAG, "❌ Parsing error: ${e.message}", e)
             e.printStackTrace()
-            return null
+
+            // NEW v2.4: Try truncated parsing as last resort
+            Log.w(TAG, "🔄 Attempting truncated message recovery...")
+            return tryTruncatedParsing(messageBody)
         }
     }
 
@@ -920,6 +850,130 @@ object MpesaParser {
         val paybillNumber: String? = null,
         val businessName: String? = null
     )
+
+    // ========================================================================
+    // NEW v2.4: INPUT SANITIZATION
+    // ========================================================================
+
+    /**
+     * Clean and normalize input before parsing
+     * Fixes common issues like trailing commas, multiple spaces, line breaks
+     *
+     * Addresses:
+     * - "CATHERINE ,,,," → "CATHERINE"
+     * - Multiple spaces → Single space
+     * - Line breaks → Space
+     * - Non-printable characters → Removed
+     */
+    private fun sanitizeInput(message: String): String {
+        return message
+            .trim()
+            // Remove multiple spaces
+            .replace(Regex("\\s+"), " ")
+            // Remove trailing commas and periods (but preserve internal ones)
+            .replace(Regex("[,\\.]+\\s*$"), "")
+            // Normalize line breaks
+            .replace(Regex("[\\r\\n]+"), " ")
+            // Remove non-printable characters
+            .replace(Regex("[\\x00-\\x1F\\x7F]"), "")
+    }
+
+    // ========================================================================
+    // NEW v2.4: TRUNCATED MESSAGE RECOVERY
+    // ========================================================================
+
+    /**
+     * Extract whatever data we can from truncated messages
+     * Used as fallback when full parsing fails
+     *
+     * Recovers: Code, Date, Time, Amount, Phone, Name (if available)
+     * Missing: Balance, Transaction Cost
+     *
+     * Returns Transaction with status="needs_review" for manual completion
+     */
+    private fun tryTruncatedParsing(message: String): Transaction? {
+        try {
+            Log.w(TAG, "🔄 Attempting truncated message recovery...")
+
+            // Clean input first
+            val cleaned = sanitizeInput(message)
+
+            // Extract code (required)
+            val mpesaCode = extractTransactionCode(cleaned) ?: run {
+                Log.e(TAG, "❌ Truncated recovery: No code found")
+                return null
+            }
+
+            // Extract date (required)
+            val dateReceived = extractDate(cleaned) ?: run {
+                Log.e(TAG, "❌ Truncated recovery: No date found")
+                return null
+            }
+
+            // Extract time (required)
+            val timeReceived = extractTime(cleaned) ?: run {
+                Log.e(TAG, "❌ Truncated recovery: No time found")
+                return null
+            }
+
+            // Extract amount (required) - use simple pattern
+            val amountRegex = """Ksh\s*([\d,]+\.?\d*)""".toRegex(RegexOption.IGNORE_CASE)
+            val amount = amountRegex.find(cleaned)
+                ?.groupValues?.get(1)
+                ?.replace(",", "")
+                ?.toDoubleOrNull() ?: run {
+                Log.e(TAG, "❌ Truncated recovery: No amount found")
+                return null
+            }
+
+            // Extract phone (optional)
+            val phoneRegex = """(254\d{9})""".toRegex()
+            val phone = phoneRegex.find(cleaned)?.groupValues?.get(1)
+
+            // Extract sender name (optional) - everything after "from [phone]"
+            val nameRegex = """from\s+\d+\s+([^.]+)""".toRegex(RegexOption.IGNORE_CASE)
+            val senderName = nameRegex.find(cleaned)
+                ?.groupValues?.get(1)
+                ?.trim()
+                ?.replace(Regex("[,\\s]+$"), "")  // Remove trailing commas/spaces
+
+            val timestamp = convertToTimestamp(dateReceived, timeReceived)
+
+            Log.w(TAG, "⚠️ TRUNCATED MESSAGE - PARTIAL RECOVERY SUCCESS:")
+            Log.w(TAG, "  ✅ Code: $mpesaCode")
+            Log.w(TAG, "  ✅ Amount: Ksh$amount")
+            Log.w(TAG, "  ✅ Date: $dateReceived $timeReceived")
+            Log.w(TAG, "  ✅ Phone: ${phone ?: "N/A"}")
+            Log.w(TAG, "  ✅ Name: ${senderName ?: "N/A"}")
+            Log.w(TAG, "  ❌ Missing: Balance & Transaction Cost")
+            Log.w(TAG, "  📋 Status: NEEDS MANUAL REVIEW")
+
+            // Return partial transaction flagged for review
+            return Transaction(
+                mpesa_code = mpesaCode,
+                amount = amount,
+                sender_phone = phone,
+                sender_name = senderName ?: "INCOMPLETE DATA - NEEDS REVIEW",
+                paybill_number = null,
+                business_name = null,
+                timestamp = timestamp,
+                date_received = dateReceived,
+                time_received = timeReceived,
+                account_balance = 0.0,  // Missing from truncated message
+                transaction_cost = 0.0,  // Missing from truncated message
+                sms_body = message,
+                transaction_type = "RECEIVED",
+                assigned_to = null,
+                transaction_category = null,
+                is_hidden = false,
+                is_internal_transfer = false,
+                status = "needs_review"  // ✅ Flag for manual review
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Truncated parsing also failed: ${e.message}")
+            return null
+        }
+    }
 
     // ========================================================================
     // UTILITY FUNCTIONS

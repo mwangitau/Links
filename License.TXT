@@ -1,0 +1,41 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2025 Kiryan Energy Ltd. All rights reserved.
+
+LINKS — Ledger & Intelligent Network for Kiryan Stations
+Developed for Shell Mangu Road Service Station, Nairobi, Kenya.
+
+This software, including all source code, documentation, assets, and related
+materials (collectively, "the Software"), is the exclusive property of
+Kiryan Energy Ltd and its developer.
+
+RESTRICTIONS:
+
+1. The Software may not be copied, reproduced, modified, distributed,
+   sublicensed, or sold, in whole or in part, without prior written
+   permission from Kiryan Energy Ltd.
+
+2. The Software may not be reverse-engineered, decompiled, or disassembled.
+
+3. The Software may not be used to build competing products or services
+   without explicit written consent.
+
+4. Station-specific APK builds may be distributed internally to authorised
+   station staff of Kiryan Energy Ltd for operational use only.
+
+PERMITTED USE:
+
+- Authorised employees and station managers of Kiryan Energy Ltd may
+  install and operate the Software on station devices.
+- Internal distribution of compiled APK files within Kiryan Energy Ltd
+  is permitted.
+
+DISCLAIMER:
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. KIRYAN ENERGY LTD SHALL NOT BE LIABLE FOR ANY DAMAGES ARISING
+FROM THE USE OF THIS SOFTWARE.
+
+For licensing inquiries or permissions:
+  Kiryan Energy Ltd
+  Nairobi, Kenya

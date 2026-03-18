@@ -4,8 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.*import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
@@ -21,9 +20,12 @@ import java.util.*
 
 @Composable
 fun SmsScreen(
-    viewModel: SmsViewModel = viewModel()
+    viewModel: SmsViewModel = viewModel(),
+    onNavigateToUnparsed: () -> Unit = {}
 ) {
     val allSms by viewModel.allRawSms.observeAsState(emptyList())
+    val parseErrorCount by viewModel.parseErrorCount.observeAsState(0)
+    val unparsedCount by viewModel.unparsedCount.observeAsState(0)
 
     Column(
         modifier = Modifier
@@ -63,7 +65,72 @@ fun SmsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ── Unparsed Messages Banner ──────────────────────────────────────────
+        if (unparsedCount > 0) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (parseErrorCount > 0)
+                        MaterialTheme.colorScheme.errorContainer
+                    else
+                        MaterialTheme.colorScheme.secondaryContainer
+                ),
+                onClick = onNavigateToUnparsed
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = if (parseErrorCount > 0)
+                                MaterialTheme.colorScheme.onErrorContainer
+                            else
+                                MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "$unparsedCount message${if (unparsedCount != 1) "s" else ""} need attention",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (parseErrorCount > 0)
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                else
+                                    MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            if (parseErrorCount > 0) {
+                                Text(
+                                    text = "$parseErrorCount parse error${if (parseErrorCount != 1) "s" else ""} • tap to review",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "View unparsed",
+                        tint = if (parseErrorCount > 0)
+                            MaterialTheme.colorScheme.onErrorContainer
+                        else
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         // SMS List
         if (allSms.isEmpty()) {

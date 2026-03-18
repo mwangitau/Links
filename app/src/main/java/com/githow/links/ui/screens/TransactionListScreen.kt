@@ -4,14 +4,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.githow.links.data.entity.EntrySource
 import com.githow.links.data.entity.Transaction
 import com.githow.links.viewmodel.TransactionViewModel
 import java.text.SimpleDateFormat
@@ -218,18 +221,50 @@ fun TransactionCard(transaction: Transaction) {
                 }
             }
 
-            // Status badge
-            if (transaction.shift_id != null) {
+            // Status badges row
+            if (transaction.shift_id != null || transaction.entry_source == EntrySource.MANUAL_SUPERVISOR) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Text(
-                        text = "Shift ${transaction.shift_id}",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+
+                    // Shift badge
+                    if (transaction.shift_id != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = "Shift ${transaction.shift_id}",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    // Manual entry badge
+                    if (transaction.entry_source == EntrySource.MANUAL_SUPERVISOR) {
+                        Surface(
+                            color = Color(0xFFFF9800).copy(alpha = 0.15f),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = null,
+                                    tint = Color(0xFFE65100),
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Text(
+                                    text = "Manual entry",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFE65100)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

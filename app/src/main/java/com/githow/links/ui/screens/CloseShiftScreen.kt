@@ -36,6 +36,15 @@ fun CloseShiftScreen(
     var errorMessage by remember { mutableStateOf("") }
     var showEditDialog by remember { mutableStateOf(false) }
 
+    // Bulk assign state
+    var showBulkAssignDialog by remember { mutableStateOf(false) }
+    var selectedCsaForBulk by remember { mutableStateOf("") }
+    var bulkAssignProgress by remember { mutableStateOf(0) }
+    var bulkAssignTotal by remember { mutableStateOf(0) }
+    var isBulkAssigning by remember { mutableStateOf(false) }
+
+    val persons by viewModel.persons.observeAsState(emptyList())
+
     val numberFormat = NumberFormat.getNumberInstance(Locale.US).apply {
         minimumFractionDigits = 2
         maximumFractionDigits = 2
@@ -182,14 +191,48 @@ fun CloseShiftScreen(
                             Card(
                                 colors = CardDefaults.cardColors(
                                     containerColor = MaterialTheme.colorScheme.errorContainer
-                                )
+                                ),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(
-                                    "⚠️ $unassignedCount unassigned transaction(s)",
-                                    modifier = Modifier.padding(8.dp),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer
-                                )
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        "⚠️ $unassignedCount unassigned transaction(s)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "You cannot close the shift until all transactions are assigned. Use bulk assign to assign all at once.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    if (isBulkAssigning) {
+                                        Column {
+                                            Text(
+                                                "Assigning $bulkAssignProgress / $bulkAssignTotal...",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            LinearProgressIndicator(
+                                                progress = if (bulkAssignTotal > 0)
+                                                    bulkAssignProgress.toFloat() / bulkAssignTotal else 0f,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = { showBulkAssignDialog = true },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.error
+                                            )
+                                        ) {
+                                            Text("Bulk Assign All $unassignedCount Transactions")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -308,6 +351,86 @@ fun CloseShiftScreen(
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onNavigateBack, modifier = Modifier.fillMaxWidth()) {
                     Text("Cancel")
+                }
+
+                // ── Bulk Assign Dialog ────────────────────────────────────
+                if (showBulkAssignDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showBulkAssignDialog = false },
+                        title = { Text("Bulk Assign Transactions") },
+                        text = {
+                            Column {
+                                Text(
+                                    "Assign all $unassignedCount unassigned transactions to one CSA.",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    "Select CSA:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                if (persons.isEmpty()) {
+                                    Text(
+                                        "No CSAs found. Please add CSAs in Person Management first.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                } else {
+                                    persons.forEach { person ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = selectedCsaForBulk == person.short_name,
+                                                onClick = { selectedCsaForBulk = person.short_name }
+                                            )
+                                            Text(person.short_name)
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val shift = currentShift
+                                    if (shift != null && selectedCsaForBulk.isNotBlank()) {
+                                        showBulkAssignDialog = false
+                                        isBulkAssigning = true
+                                        bulkAssignTotal = unassignedCount
+                                        viewModel.bulkAssignAll(
+                                            shiftId = shift.shift_id,
+                                            personName = selectedCsaForBulk,
+                                            onProgress = { assigned, total ->
+                                                bulkAssignProgress = assigned
+                                                bulkAssignTotal = total
+                                            },
+                                            onComplete = {
+                                                isBulkAssigning = false
+                                                bulkAssignProgress = 0
+                                            },
+                                            onError = { error ->
+                                                isBulkAssigning = false
+                                                errorMessage = "Bulk assign failed: $error"
+                                                showErrorDialog = true
+                                            }
+                                        )
+                                    }
+                                },
+                                enabled = selectedCsaForBulk.isNotBlank()
+                            ) {
+                                Text("Assign All")
+                            }
+                        },
+                        dismissButton = {
+                            OutlinedButton(onClick = { showBulkAssignDialog = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
                 }
 
                 if (currentShift?.status == "CLOSED" && currentShift?.close_balance != null) {

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.githow.links.data.database.LinksDatabase
 import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
+import com.githow.links.data.entity.ShiftAssignment
 import com.githow.links.data.entity.Transaction
 import com.githow.links.sync.CloudSyncManager
 import com.githow.links.sync.SyncResult
@@ -282,9 +283,22 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 // Get updated shift for sync
                 val updatedShift = shiftDao.getShiftByIdDirect(shiftId)
                 if (updatedShift != null) {
+                    // Derive CSA assignments from transaction assigned_to values
+                    val derivedAssignments = shiftTransactions
+                        .filter { !it.assigned_to.isNullOrBlank() && it.assigned_to != "Neutral" }
+                        .groupBy { it.assigned_to!! }
+                        .map { (personName, _) ->
+                            ShiftAssignment(
+                                shift_id = shiftId,
+                                person_name = personName,
+                                role = "CSA"
+                            )
+                        }
+
                     val syncResult = cloudSyncManager.syncShiftToCloud(
                         shift = updatedShift,
-                        transactions = shiftTransactions
+                        transactions = shiftTransactions,
+                        assignments = derivedAssignments
                     )
 
                     when (syncResult) {
@@ -394,6 +408,10 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    fun refreshTransactions() {
+        currentShift.value?.let { loadShiftTransactions(it.shift_id) }
+    }
+
     private fun loadShiftTransactions(shiftId: Long) {
         viewModelScope.launch {
             try {
@@ -414,6 +432,48 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============ ASSIGNMENT METHODS ============
 
+    /**
+     * Bulk assign ALL unassigned transactions in the current shift to one CSA.
+     * Used to clear the assignment blocker when closing a stuck shift.
+     * Processes in batches of 100 to avoid overwhelming the database.
+     */
+    fun bulkAssignAll(
+        shiftId: Long,
+        personName: String,
+        onProgress: (assigned: Int, total: Int) -> Unit,
+        onComplete: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val allTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                val unassigned = allTransactions.filter { it.assigned_to.isNullOrBlank() }
+                val total = unassigned.size
+                var assigned = 0
+
+                Log.d(TAG, "🔄 Bulk assigning $total transactions to $personName")
+
+                // Process in batches of 100
+                unassigned.chunked(100).forEach { batch ->
+                    batch.forEach { txn ->
+                        transactionDao.assignTransaction(txn.id, personName, "BULK_ASSIGNED")
+                        assigned++
+                    }
+                    onProgress(assigned, total)
+                    Log.d(TAG, "  Bulk assign progress: $assigned / $total")
+                }
+
+                Log.d(TAG, "✅ Bulk assign complete: $assigned transactions assigned to $personName")
+                loadShiftTransactions(shiftId)
+                onComplete()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Bulk assign failed: ${e.message}", e)
+                onError(e.message ?: "Unknown error")
+            }
+        }
+    }
+
     fun assignTransactions(transactionIds: List<Long>, personName: String, category: String) {
         viewModelScope.launch {
             try {
@@ -422,6 +482,14 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 Log.d(TAG, "✅ Assigned ${transactionIds.size} transactions to $personName")
+
+                // Backup each assigned transaction to Supabase
+                transactionIds.forEach { id ->
+                    val txn = transactionDao.getTransactionById(id)
+                    if (txn != null) {
+                        cloudSyncManager.backupAssignedTransaction(txn)
+                    }
+                }
 
                 // Reload UI transactions
                 currentShift.value?.let { shift ->
@@ -439,6 +507,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 transactionDao.assignTransaction(transactionId, newPersonName, newCategory)
+
+                // Backup reassigned transaction to Supabase
+                val txn = transactionDao.getTransactionById(transactionId)
+                if (txn != null) {
+                    cloudSyncManager.backupAssignedTransaction(txn)
+                }
 
                 currentShift.value?.let { shift ->
                     loadShiftTransactions(shift.shift_id)

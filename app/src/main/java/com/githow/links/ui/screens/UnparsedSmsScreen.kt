@@ -131,7 +131,11 @@ fun UnparsedSmsScreen(
                     items(filteredMessages) { rawSms ->
                         UnparsedSmsCard(
                             rawSms = rawSms,
-                            onManualEntry = { onManualEntry(rawSms.id) }
+                            onManualEntry = {
+                                // Ensure it's in review queue before navigating
+                                viewModel.ensureInReviewQueue(rawSms)
+                                onManualEntry(rawSms.id)
+                            }
                         )
                     }
                 }

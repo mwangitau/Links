@@ -135,4 +135,30 @@ interface TransactionDao {
 
     @Query("SELECT SUM(amount) FROM transactions WHERE shift_id = :shiftId AND transaction_category = :category")
     suspend fun getTotalByShiftAndCategory(shiftId: Long, category: String): Double?
+
+    // ============ SUPABASE SYNC ============
+
+    @Query("SELECT * FROM transactions WHERE supabase_synced = 0 ORDER BY timestamp ASC LIMIT :limit")
+    suspend fun getUnsyncedTransactions(limit: Int = 100): List<Transaction>
+
+    @Query("SELECT COUNT(*) FROM transactions WHERE supabase_synced = 0")
+    suspend fun getUnsyncedTransactionCount(): Int
+
+    @Query("""
+        UPDATE transactions 
+        SET supabase_synced = 1,
+            supabase_sync_attempts = supabase_sync_attempts + 1,
+            supabase_sync_error = NULL,
+            synced_at = :timestamp
+        WHERE id = :id
+    """)
+    suspend fun markTransactionSynced(id: Long, timestamp: Long = System.currentTimeMillis())
+
+    @Query("""
+        UPDATE transactions 
+        SET supabase_sync_attempts = supabase_sync_attempts + 1,
+            supabase_sync_error = :error
+        WHERE id = :id
+    """)
+    suspend fun markTransactionSyncFailed(id: Long, error: String)
 }

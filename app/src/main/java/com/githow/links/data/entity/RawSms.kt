@@ -7,9 +7,10 @@ import androidx.room.Index
 @Entity(
     tableName = "raw_sms",
     indices = [
-        Index("received_timestamp"),  // Changed from received_at
+        Index("received_timestamp"),
         Index("mpesa_code"),
-        Index("parse_status")
+        Index("parse_status"),
+        Index("synced_to_webhook")   // Added by migration 3→4; declared here to match DB schema
     ]
 )
 data class RawSms(

@@ -1,8 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)  // ✅ ADDED - Compose Compiler Plugin
+    alias(libs.plugins.kotlin.compose)
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21"
     id("com.google.devtools.ksp")
+}
+
+// Load local.properties
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -17,6 +26,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Supabase credentials exposed to app via BuildConfig
+        buildConfigField("String", "SUPABASE_URL",
+            "\"${localProps.getProperty("SUPABASE_URL", "")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY",
+            "\"${localProps.getProperty("SUPABASE_ANON_KEY", "")}\"")
     }
 
     buildTypes {
@@ -37,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -50,7 +66,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
 
-    // ✅ ADDED - Material Icons Extended (for Visibility icons)
+    // Material Icons Extended
     implementation("androidx.compose.material:material-icons-extended:1.5.4")
 
     testImplementation(libs.junit)
@@ -77,13 +93,22 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // Kotlin Serialization (required for Supabase @Serializable data classes)
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
     // OkHttp
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Compose LiveData integration - CRITICAL FOR UI
+    // Compose LiveData integration
     implementation("androidx.compose.runtime:runtime-livedata:1.6.0")
 
     // Firebase
     implementation(libs.firebase.storage.ktx)
     implementation(libs.firebase.firestore.ktx)
+
+    // ── Supabase ─────────────────────────────────────────────────────────────
+    implementation(platform("io.github.jan-tennert.supabase:bom:2.5.4"))
+    implementation("io.github.jan-tennert.supabase:postgrest-kt:2.5.4")
+    implementation("io.github.jan-tennert.supabase:realtime-kt:2.5.4")
+    implementation("io.ktor:ktor-client-android:2.3.12")
 }

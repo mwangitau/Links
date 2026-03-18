@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.githow.links.data.database.LinksDatabase
 import com.githow.links.data.entity.RawSms
+import com.githow.links.service.ManualReviewService
 import com.githow.links.ui.screens.ParseStatisticsUI
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -13,6 +14,11 @@ class UnparsedSmsViewModel(application: Application) : AndroidViewModel(applicat
 
     private val database = LinksDatabase.getDatabase(application)
     private val rawSmsDao = database.rawSmsDao()
+    private val manualReviewService = ManualReviewService(
+        manualReviewDao = database.manualReviewQueueDao(),
+        rawSmsDao = rawSmsDao,
+        transactionDao = database.transactionDao()
+    )
 
     // ============================================
     // STATE FLOWS
@@ -59,15 +65,38 @@ class UnparsedSmsViewModel(application: Application) : AndroidViewModel(applicat
                 _statistics.value = ParseStatisticsUI(
                     total = stats.total,
                     unprocessed = stats.unprocessed,
-                    parsed_success = stats.parsed_success,           // ✅ FIXED: Use underscores
-                    parse_error = stats.parse_error,                 // ✅ FIXED: Use underscores
-                    manual_review = stats.manual_review,             // ✅ FIXED: Use underscores
-                    manually_entered = stats.manually_entered,       // ✅ FIXED: Use underscores
-                    parse_success_rate = stats.parse_success_rate,   // ✅ FIXED: Use underscores
-                    manual_entry_rate = stats.manual_entry_rate      // ✅ FIXED: Use underscores
+                    parsed_success = stats.parsed_success,
+                    parse_error = stats.parse_error,
+                    manual_review = stats.manual_review,
+                    manually_entered = stats.manually_entered,
+                    parse_success_rate = stats.parse_success_rate,
+                    manual_entry_rate = stats.manual_entry_rate
                 )
             } catch (e: Exception) {
                 e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * Ensure a PARSE_ERROR SMS is in the manual_review_queue.
+     * Safe to call multiple times — insert uses REPLACE conflict strategy.
+     */
+    fun ensureInReviewQueue(rawSms: RawSms) {
+        viewModelScope.launch {
+            try {
+                val partial = manualReviewService.extractPartialData(rawSms.message_body)
+                manualReviewService.addToReviewQueue(
+                    rawSmsId = rawSms.id,
+                    rawMessage = rawSms.message_body,
+                    timestamp = rawSms.received_timestamp,
+                    extractedCode = partial.code,
+                    extractedAmount = partial.amount,
+                    extractedSender = partial.senderName,
+                    extractedPhone = partial.senderPhone
+                )
+            } catch (e: Exception) {
+                // Already queued or DB error — safe to ignore
             }
         }
     }

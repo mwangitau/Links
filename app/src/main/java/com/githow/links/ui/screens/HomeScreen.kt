@@ -1,5 +1,7 @@
 package com.githow.links.ui.screens
 
+import com.githow.links.config.StationConfig
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,19 +20,23 @@ import com.githow.links.viewmodel.TransactionViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToOpenShift: () -> Unit = {},
     onNavigateToCloseShift: () -> Unit = {},
     onNavigateToShiftDashboard: () -> Unit = {},
     onNavigateToAssignTransactions: () -> Unit = {},
-    onNavigateToShiftHistory: () -> Unit = {}
+    onNavigateToShiftHistory: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val shiftViewModel: ShiftViewModel = viewModel()
     val transactionViewModel: TransactionViewModel = viewModel()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val currentShift by shiftViewModel.currentActiveShift.observeAsState()
     val allTransactions by transactionViewModel.allTransactions.observeAsState(emptyList())
+    val isStationConfigured = StationConfig.isConfigured(context)
 
     // Calculate today's stats
     val todayTransactions = remember(allTransactions) {
@@ -46,14 +52,52 @@ fun HomeScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
+        // ── Station not configured banner ─────────────────────────────────
+        if (!isStationConfigured) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                ),
+                onClick = onNavigateToSettings
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "⚠️ Station Not Configured",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            "Tap here to set up station identity before syncing data.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                    Icon(
+                        androidx.compose.material.icons.Icons.Default.Settings,
+                        contentDescription = "Go to Settings",
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
         // Header
         Text(
             text = "LINKS",
             style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
         )
         Text(
-            text = "M-PESA Management System",
+            text = if (isStationConfigured) StationConfig.getStationName(context)
+            else "M-PESA Management System",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

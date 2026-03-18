@@ -1,5 +1,7 @@
 package com.githow.links.receiver
 
+import com.githow.links.worker.SupabaseSyncWorker
+
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,6 +16,7 @@ import com.githow.links.R
 import com.githow.links.data.database.LinksDatabase
 import com.githow.links.data.entity.RawSms
 import com.githow.links.data.entity.ParseStatus
+import com.githow.links.service.ManualReviewService
 import com.githow.links.utils.MpesaParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,9 +31,6 @@ class SmsReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        // ========================================
-        // 🔥 ENHANCED DEBUG LOGGING
-        // ========================================
         Log.e(TAG, "═══════════════════════════════════════")
         Log.e(TAG, "📱 SMS RECEIVER TRIGGERED!")
         Log.e(TAG, "═══════════════════════════════════════")
@@ -40,82 +40,78 @@ class SmsReceiver : BroadcastReceiver() {
 
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
             Log.e(TAG, "❌ Wrong action: ${intent.action}")
-            Log.e(TAG, "Expected: ${Telephony.Sms.Intents.SMS_RECEIVED_ACTION}")
             return
         }
 
-        try {
-            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-            Log.e(TAG, "📨 Total messages: ${messages.size}")
+        // goAsync() tells Android: "I'm not done yet — don't recycle this receiver"
+        // Without this, Android can kill the BroadcastReceiver before the coroutine
+        // finishes saving to the database, causing silent SMS loss
+        val pendingResult = goAsync()
 
-            // Concatenate multi-part SMS
-            val mpesaMessages = mutableMapOf<String, StringBuilder>()
-            val timestamps = mutableMapOf<String, Long>()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+                Log.e(TAG, "📨 Total messages: ${messages.size}")
 
-            messages.forEachIndexed { index, smsMessage ->
-                val messageBody = smsMessage.messageBody ?: ""
-                val sender = smsMessage.displayOriginatingAddress ?: "Unknown"
-                val timestamp = smsMessage.timestampMillis
+                val mpesaMessages = mutableMapOf<String, StringBuilder>()
+                val timestamps = mutableMapOf<String, Long>()
 
-                Log.e(TAG, "─────────────────────────────────────")
-                Log.e(TAG, "Message #${index + 1}:")
-                Log.e(TAG, "From: $sender")
-                Log.e(TAG, "Body Length: ${messageBody.length} chars")
-                Log.e(TAG, "Body Preview: ${messageBody.take(100)}")
-                Log.e(TAG, "Full Body: $messageBody")
-                Log.e(TAG, "Timestamp: $timestamp")
+                messages.forEachIndexed { index, smsMessage ->
+                    val messageBody = smsMessage.messageBody ?: ""
+                    val sender = smsMessage.displayOriginatingAddress ?: "Unknown"
+                    val timestamp = smsMessage.timestampMillis
 
-                // Check if M-PESA
-                val isMpesa = isMpesaSms(sender, messageBody)
-                Log.e(TAG, "Is M-PESA? $isMpesa")
+                    Log.e(TAG, "─────────────────────────────────────")
+                    Log.e(TAG, "Message #${index + 1}:")
+                    Log.e(TAG, "From: $sender")
+                    Log.e(TAG, "Body Preview: ${messageBody.take(100)}")
 
-                if (isMpesa) {
-                    Log.e(TAG, "✅ M-PESA DETECTED!")
-                    if (!mpesaMessages.containsKey(sender)) {
-                        mpesaMessages[sender] = StringBuilder()
-                        timestamps[sender] = timestamp
+                    val isMpesa = isMpesaSms(sender, messageBody)
+                    Log.e(TAG, "Is M-PESA? $isMpesa")
+
+                    if (isMpesa) {
+                        if (!mpesaMessages.containsKey(sender)) {
+                            mpesaMessages[sender] = StringBuilder()
+                            timestamps[sender] = timestamp
+                        }
+                        mpesaMessages[sender]?.append(messageBody)
                     }
-                    mpesaMessages[sender]?.append(messageBody)
-                } else {
-                    Log.e(TAG, "⏭️ Not M-PESA, skipping")
                 }
-                Log.e(TAG, "─────────────────────────────────────")
+
+                Log.e(TAG, "📊 Total M-PESA messages to process: ${mpesaMessages.size}")
+
+                mpesaMessages.forEach { (sender, messageBuilder) ->
+                    val completeMessage = messageBuilder.toString()
+                    val timestamp = timestamps[sender] ?: System.currentTimeMillis()
+                    handleMpesaSms(context, sender, completeMessage, timestamp)
+                }
+
+                Log.e(TAG, "✅ SMS Receiver processing complete!")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ CRITICAL ERROR in onReceive: ${e.message}", e)
+                e.printStackTrace()
+            } finally {
+                // CRITICAL: always call finish() so Android knows we're done
+                pendingResult.finish()
             }
-
-            Log.e(TAG, "📊 Total M-PESA messages to process: ${mpesaMessages.size}")
-
-            // Process each M-PESA message
-            mpesaMessages.forEach { (sender, messageBuilder) ->
-                val completeMessage = messageBuilder.toString()
-                val timestamp = timestamps[sender] ?: System.currentTimeMillis()
-
-                Log.e(TAG, "🔄 Processing M-PESA message from: $sender")
-                handleMpesaSms(context, sender, completeMessage, timestamp)
-            }
-
-            Log.e(TAG, "✅ SMS Receiver processing complete!")
-            Log.e(TAG, "═══════════════════════════════════════")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ CRITICAL ERROR in onReceive: ${e.message}", e)
-            e.printStackTrace()
         }
     }
 
     private fun isMpesaSms(sender: String, body: String): Boolean {
-        val result = sender.contains("MPESA", ignoreCase = true) ||
-                body.startsWith("TK") ||
-                body.startsWith("TJ") ||
-                body.contains("Confirmed", ignoreCase = true)
+        // Sender check — most reliable signal
+        if (sender.contains("MPESA", ignoreCase = true)) return true
 
-        Log.e(TAG, "isMpesaSms check:")
-        Log.e(TAG, "  - Sender contains 'MPESA': ${sender.contains("MPESA", ignoreCase = true)}")
-        Log.e(TAG, "  - Body starts with 'TK': ${body.startsWith("TK")}")
-        Log.e(TAG, "  - Body starts with 'TJ': ${body.startsWith("TJ")}")
-        Log.e(TAG, "  - Body contains 'Confirmed': ${body.contains("Confirmed", ignoreCase = true)}")
-        Log.e(TAG, "  - Final result: $result")
+        // M-PESA transaction code at start of message
+        // Year codes: Q=2022 R=2023 S=2024 T=2025 U=2026 V=2027 ...
+        // Month codes: A-L (Jan-Dec)
+        if (body.matches("""^[QRSTUV][A-L][A-Z0-9]{8}.*""".toRegex(RegexOption.DOT_MATCHES_ALL))) return true
 
-        return result
+        // Confirmed keyword — fallback for unusual formats
+        if (body.contains("Confirmed", ignoreCase = true) &&
+            body.contains("Ksh", ignoreCase = true)) return true
+
+        return false
     }
 
     private fun handleMpesaSms(context: Context, sender: String, messageBody: String, smsTimestamp: Long) {
@@ -150,6 +146,27 @@ class SmsReceiver : BroadcastReceiver() {
                 Log.e(TAG, "💾 Inserting RawSms into database...")
                 val rawSmsId = rawSmsDao.insert(rawSms)
                 Log.e(TAG, "✅✅✅ RAW SMS SAVED! ID: $rawSmsId ✅✅✅")
+
+                // ── Supabase backup — happens immediately after Room save ──
+                // The raw SMS is now safe in the cloud before we even attempt parsing
+                try {
+                    val savedRawSms = rawSmsDao.getById(rawSmsId)
+                    if (savedRawSms != null) {
+                        val syncManager = com.githow.links.sync.CloudSyncManager(context)
+                        val result = syncManager.backupRawSms(savedRawSms)
+                        when (result) {
+                            is com.githow.links.sync.SyncResult.Success ->
+                                Log.d(TAG, "☁️ Raw SMS backed up to Supabase")
+                            is com.githow.links.sync.SyncResult.Failure -> {
+                                Log.w(TAG, "⚠️ Supabase backup failed — scheduling retry: \${result.error}")
+                                SupabaseSyncWorker.scheduleRetry(context)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Supabase backup failed (SMS still saved locally): \${e.message}")
+                    SupabaseSyncWorker.scheduleRetry(context)
+                }
 
                 // Now try to parse
                 Log.e(TAG, "🔍 Attempting to parse SMS...")
@@ -196,6 +213,32 @@ class SmsReceiver : BroadcastReceiver() {
                 )
                 rawSmsDao.update(failedSms)
                 Log.e(TAG, "✅ RawSms updated with PARSE_ERROR status")
+
+                // ── ADD TO MANUAL REVIEW QUEUE ──────────────────────────────
+                // So supervisor can see it in ManualReviewScreen and enter it manually
+                try {
+                    val manualReviewService = ManualReviewService(
+                        manualReviewDao = database.manualReviewQueueDao(),
+                        rawSmsDao = rawSmsDao,
+                        transactionDao = database.transactionDao()
+                    )
+                    // Try to extract whatever partial data we can to pre-fill the form
+                    val partial = manualReviewService.extractPartialData(messageBody)
+                    manualReviewService.addToReviewQueue(
+                        rawSmsId = rawSmsId,
+                        rawMessage = messageBody,
+                        timestamp = smsTimestamp,
+                        extractedCode = partial.code,
+                        extractedAmount = partial.amount,
+                        extractedSender = partial.senderName,
+                        extractedPhone = partial.senderPhone
+                    )
+                    Log.e(TAG, "✅ Added to manual review queue")
+                } catch (queueError: Exception) {
+                    Log.e(TAG, "⚠️ Failed to add to review queue: ${queueError.message}")
+                    // Non-fatal: raw SMS is already saved with PARSE_ERROR status
+                }
+                // ────────────────────────────────────────────────────────────
 
                 showErrorNotification(context, "Failed to parse M-PESA SMS")
                 return
@@ -284,6 +327,7 @@ class SmsReceiver : BroadcastReceiver() {
 
             try {
                 val rawSmsDao = LinksDatabase.getDatabase(context).rawSmsDao()
+                val database = LinksDatabase.getDatabase(context)
 
                 val errorSms = RawSms(
                     id = rawSmsId,
@@ -297,6 +341,28 @@ class SmsReceiver : BroadcastReceiver() {
                 )
                 rawSmsDao.update(errorSms)
                 Log.e(TAG, "✅ Error logged to database")
+
+                // Add to manual review queue so supervisor can handle it
+                try {
+                    val manualReviewService = ManualReviewService(
+                        manualReviewDao = database.manualReviewQueueDao(),
+                        rawSmsDao = rawSmsDao,
+                        transactionDao = database.transactionDao()
+                    )
+                    val partial = manualReviewService.extractPartialData(messageBody)
+                    manualReviewService.addToReviewQueue(
+                        rawSmsId = rawSmsId,
+                        rawMessage = messageBody,
+                        timestamp = smsTimestamp,
+                        extractedCode = partial.code,
+                        extractedAmount = partial.amount,
+                        extractedSender = partial.senderName,
+                        extractedPhone = partial.senderPhone
+                    )
+                    Log.e(TAG, "✅ Exception path: added to manual review queue")
+                } catch (queueError: Exception) {
+                    Log.e(TAG, "⚠️ Failed to add to review queue (exception path): ${queueError.message}")
+                }
             } catch (dbError: Exception) {
                 Log.e(TAG, "❌ Failed to log error to DB: ${dbError.message}")
             }

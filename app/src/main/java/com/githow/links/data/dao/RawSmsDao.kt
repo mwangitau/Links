@@ -19,9 +19,9 @@ interface RawSmsDao {
 
     @Query("""
         SELECT * FROM raw_sms 
-        WHERE parse_status = 'PARSE_ERROR' 
+        WHERE parse_status IN ('PARSE_ERROR', 'UNPROCESSED', 'MANUAL_REVIEW')
         ORDER BY received_timestamp DESC
-    """)  // ✅ CHANGED
+    """)
     fun getUnparsedSms(): Flow<List<RawSms>>
 
     @Query("""
@@ -36,6 +36,12 @@ interface RawSmsDao {
 
     @Query("SELECT COUNT(*) FROM raw_sms WHERE parse_status = 'PARSE_ERROR'")
     fun getParseErrorCount(): Flow<Int>
+
+    @Query("""
+        SELECT COUNT(*) FROM raw_sms 
+        WHERE parse_status IN ('PARSE_ERROR', 'UNPROCESSED', 'MANUAL_REVIEW')
+    """)
+    fun getUnparsedCount(): Flow<Int>
 
     @Query("""
         SELECT * FROM raw_sms 

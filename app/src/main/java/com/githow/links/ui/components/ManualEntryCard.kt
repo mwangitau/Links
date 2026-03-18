@@ -23,6 +23,51 @@ import com.githow.links.data.entity.TransactionType
 import java.text.SimpleDateFormat
 import java.util.*
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+/** Parse the date and time that M-PESA embeds in the SMS body.
+ *  Looks for "on D/M/YY at H:MM AM/PM" and converts to a Long timestamp.
+ *  Returns null when nothing is found so the form falls back to received_timestamp. */
+private fun extractSmsTransactionTime(smsBody: String): Long? {
+    return try {
+        val dateRegex = """[.\s]on\s+(\d{1,2}/\d{1,2}/\d{2,4})""".toRegex(RegexOption.IGNORE_CASE)
+        val timeRegex = """at\s+(\d{1,2}:\d{1,2})\s*([AP]M)""".toRegex(RegexOption.IGNORE_CASE)
+        val date = dateRegex.find(smsBody)?.groupValues?.get(1) ?: return null
+        val timeMatch = timeRegex.find(smsBody) ?: return null
+        val time = "${timeMatch.groupValues[1]} ${timeMatch.groupValues[2]}"
+        val sdf = SimpleDateFormat("d/M/yy h:mm a", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("Africa/Nairobi")
+        sdf.parse("$date $time")?.time
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** Format a Long timestamp to a human-readable date string for display. */
+private fun formatTimestampForDisplay(timestamp: Long): String {
+    val sdf = SimpleDateFormat("dd MMM yyyy", Locale.US)
+    sdf.timeZone = TimeZone.getTimeZone("Africa/Nairobi")
+    return sdf.format(Date(timestamp))
+}
+
+/** Format a Long timestamp to HH:MM for display. */
+private fun formatTimeForDisplay(timestamp: Long): String {
+    val sdf = SimpleDateFormat("HH:mm", Locale.US)
+    sdf.timeZone = TimeZone.getTimeZone("Africa/Nairobi")
+    return sdf.format(Date(timestamp))
+}
+
+/** Combine a date string "dd MMM yyyy" and time string "HH:mm" into a Long timestamp. */
+private fun combineToTimestamp(dateStr: String, timeStr: String): Long? {
+    return try {
+        val sdf = SimpleDateFormat("dd MMM yyyy HH:mm", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("Africa/Nairobi")
+        sdf.parse("$dateStr $timeStr")?.time
+    } catch (e: Exception) {
+        null
+    }
+}
+
 /**
  * ManualEntryCard - Expandable card for manual M-PESA entry
  *
@@ -41,6 +86,13 @@ fun ManualEntryCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
+    // ── Determine best starting timestamp ──────────────────────────────────
+    // Prefer the real M-PESA transaction time embedded in the SMS text.
+    // Fall back to the time the SMS arrived on the phone.
+    val bestTimestamp = remember(item.raw_message) {
+        extractSmsTransactionTime(item.raw_message) ?: item.received_timestamp
+    }
+
     // Form state
     var mpesaCode by remember { mutableStateOf(item.extracted_code ?: "") }
     var amount by remember { mutableStateOf(item.extracted_amount?.toString() ?: "") }
@@ -50,7 +102,15 @@ fun ManualEntryCard(
     var isTransfer by remember { mutableStateOf(false) }
     var paybillNumber by remember { mutableStateOf("") }
     var businessName by remember { mutableStateOf("") }
-    var transactionTime by remember { mutableStateOf(item.received_timestamp) }
+
+    // Editable date and time — initialised from the SMS-embedded timestamp
+    var txnDateDisplay by remember { mutableStateOf(formatTimestampForDisplay(bestTimestamp)) }
+    var txnTimeDisplay by remember { mutableStateOf(formatTimeForDisplay(bestTimestamp)) }
+    var txnDateError by remember { mutableStateOf(false) }
+    var txnTimeError by remember { mutableStateOf(false) }
+
+    // Resolved timestamp — recomputes whenever the supervisor edits the date or time fields
+    val resolvedTimestamp = combineToTimestamp(txnDateDisplay, txnTimeDisplay) ?: bestTimestamp
 
     // Validation
     val isFormValid = mpesaCode.isNotBlank() &&
@@ -246,7 +306,86 @@ fun ManualEntryCard(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Transaction Type
+                    // ── Transaction Date & Time ───────────────────────────────
+                    Text(
+                        text = "Transaction Date & Time",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    // Info chip — shows where the time was sourced from
+                    val timeSource = if (extractSmsTransactionTime(item.raw_message) != null)
+                        "Auto-read from SMS text" else "Defaulted to SMS arrival time — please verify"
+                    val timeSourceColor = if (extractSmsTransactionTime(item.raw_message) != null)
+                        Color(0xFF4CAF50) else Color(0xFFFF9800)
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = timeSourceColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = timeSource,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = timeSourceColor
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Date field — format: dd MMM yyyy e.g. "04 Jan 2026"
+                        OutlinedTextField(
+                            value = txnDateDisplay,
+                            onValueChange = {
+                                txnDateDisplay = it
+                                txnDateError = combineToTimestamp(it, txnTimeDisplay) == null
+                            },
+                            label = { Text("Date") },
+                            placeholder = { Text("04 Jan 2026") },
+                            isError = txnDateError,
+                            supportingText = {
+                                if (txnDateError) Text("Use: dd MMM yyyy")
+                                else Text("dd MMM yyyy")
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            leadingIcon = {
+                                Icon(Icons.Default.DateRange, contentDescription = null,
+                                    modifier = Modifier.size(18.dp))
+                            }
+                        )
+
+                        // Time field — format: HH:mm e.g. "14:35"
+                        OutlinedTextField(
+                            value = txnTimeDisplay,
+                            onValueChange = {
+                                txnTimeDisplay = it
+                                txnTimeError = combineToTimestamp(txnDateDisplay, it) == null
+                            },
+                            label = { Text("Time") },
+                            placeholder = { Text("14:35") },
+                            isError = txnTimeError,
+                            supportingText = {
+                                if (txnTimeError) Text("Use: HH:mm")
+                                else Text("24-hr HH:mm")
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            leadingIcon = {
+                                Icon(Icons.Default.Schedule, contentDescription = null,
+                                    modifier = Modifier.size(18.dp))
+                            }
+                        )
+                    }
+                    // ─────────────────────────────────────────────────────────
                     Text(
                         text = "Transaction Type",
                         style = MaterialTheme.typography.labelMedium,
@@ -353,13 +492,13 @@ fun ManualEntryCard(
                                     senderPhone = senderPhone.ifBlank { null },
                                     transactionType = transactionType,
                                     isTransfer = isTransfer,
-                                    transactionTime = transactionTime,
+                                    transactionTime = resolvedTimestamp,
                                     paybillNumber = paybillNumber.ifBlank { null },
                                     businessName = businessName.ifBlank { null }
                                 )
                                 onSubmit(data)
                             },
-                            enabled = isFormValid
+                            enabled = isFormValid && !txnDateError && !txnTimeError
                         ) {
                             Icon(Icons.Default.Lock, contentDescription = null)
                             Spacer(modifier = Modifier.width(4.dp))
@@ -367,9 +506,12 @@ fun ManualEntryCard(
                         }
                     }
 
-                    if (!isFormValid) {
+                    if (!isFormValid || txnDateError || txnTimeError) {
                         Text(
-                            text = "⚠️ M-PESA Code (10 chars) and Amount are required",
+                            text = when {
+                                txnDateError || txnTimeError -> "⚠️ Fix the date/time fields (dd MMM yyyy  HH:mm)"
+                                else -> "⚠️ M-PESA Code (10 chars) and Amount are required"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )

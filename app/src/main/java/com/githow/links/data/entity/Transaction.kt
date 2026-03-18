@@ -25,7 +25,8 @@ import androidx.room.Index
         Index("shift_id"),
         Index("mpesa_code", unique = true),
         Index("raw_sms_id"),
-        Index("entry_source")
+        Index("entry_source"),
+        Index("supabase_synced")  // Added by migration 3→4; declared here to match DB schema
     ]
 )
 data class Transaction(
@@ -53,7 +54,10 @@ data class Transaction(
     val entry_source: EntrySource = EntrySource.AUTO_PARSED,
     val status: String = "pending",
     val created_at: Long = System.currentTimeMillis(),
-    val synced_at: Long? = null
+    val synced_at: Long? = null,
+    val supabase_synced: Boolean = false,
+    val supabase_sync_attempts: Int = 0,
+    val supabase_sync_error: String? = null
 )
 
 enum class EntrySource {

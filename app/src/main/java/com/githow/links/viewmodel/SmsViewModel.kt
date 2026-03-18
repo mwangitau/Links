@@ -9,6 +9,12 @@ class SmsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val rawSmsDao = LinksDatabase.getDatabase(application).rawSmsDao()
 
-    // Convert Flow to LiveData for Compose observeAsState
+    // All raw SMS messages (LiveData for Compose observeAsState)
     val allRawSms = rawSmsDao.getAllRawSms().asLiveData()
+
+    // Count of PARSE_ERROR messages — used for badge on "View Unparsed" button
+    val parseErrorCount = rawSmsDao.getParseErrorCount().asLiveData()
+
+    // Count of all messages needing attention (PARSE_ERROR + UNPROCESSED + MANUAL_REVIEW)
+    val unparsedCount = rawSmsDao.getUnparsedCount().asLiveData()
 }

@@ -167,7 +167,7 @@ All upserts use `onConflict` to ensure idempotency — safe to retry.
 ### Add a New Station (Supabase)
 ```sql
 INSERT INTO stations (station_code, station_name, till_number, paybill_number)
-VALUES ('JOSKA', 'Shell Joska - Kagundo Rd', '5913839', '5913839');
+VALUES ('JOSKA', 'Shell Joska - Kagundo Rd', '0', '0');
 ```
 
 ### Configure the Phone (Settings Screen)
@@ -175,8 +175,8 @@ VALUES ('JOSKA', 'Shell Joska - Kagundo Rd', '5913839', '5913839');
 |-------|---------|
 | Station Code | `JOSKA` |
 | Station Name | `Shell Joska - Kagundo Rd` |
-| Till Number | `5913839` |
-| Paybill Number | `5913839` |
+| Till Number | `0` |
+| Paybill Number | `0` |
 
 **Notes:**
 - Station code is auto-uppercased on save
@@ -267,8 +267,8 @@ POST_NOTIFICATIONS              — foreground service notification
 
 | Station | Code | Location | Till/Paybill |
 |---------|------|----------|--------------|
-| Shell Mangu Road | `MANGU` | Nairobi | 5176352 / 5176338 |
-| Shell Joska | `JOSKA` | Kagundo Rd | 5913839 / 5913839 |
+| Shell Mangu Road | `MANGU` | Nairobi |  |
+| Shell Joska | `JOSKA` | Kagundo Rd |  |
 
 ---
 
@@ -290,7 +290,8 @@ For licensing inquiries, contact the development team.
 ## Developer
 
 **Knee** — Station Manager, Kiryan Energy Ltd  
-BSc Applied Statistics with IT  
+BSc Applied Statistics with IT
+MSc of Science in Artificial Intelligence
 Built and maintained independently alongside station operations.
 
 ---

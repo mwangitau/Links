@@ -11,9 +11,13 @@ import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
 import com.githow.links.data.entity.ShiftAssignment
 import com.githow.links.data.entity.Transaction
+import com.githow.links.data.entity.TransactionRole
+import com.githow.links.data.entity.TransactionDirection
+import com.githow.links.data.entity.toDirection
+import com.githow.links.data.entity.includedInReconciliation
+import com.githow.links.data.entity.withRole
 import com.githow.links.sync.CloudSyncManager
 import com.githow.links.sync.SyncResult
-import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +66,27 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     val syncStatus: LiveData<String?> = _syncStatus
 
     private val TAG = "ShiftViewModel"
+
+    // ── v6: Shift close check result ─────────────────────────────────────────
+    sealed class ShiftCloseCheck {
+        object Ready : ShiftCloseCheck()
+        data class Blocked(val count: Int, val total: Double) : ShiftCloseCheck()
+    }
+
+    /**
+     * Check if a shift can be closed.
+     * Blocked if any UNASSIGNED transactions exist — manager must assign them first.
+     * DUPLICATE transactions are exempt (conscious manager decision).
+     */
+    suspend fun canCloseShift(shiftId: Long): ShiftCloseCheck {
+        val count = transactionDao.countUnassigned(shiftId)
+        return if (count == 0) {
+            ShiftCloseCheck.Ready
+        } else {
+            val total = transactionDao.sumUnassigned(shiftId)
+            ShiftCloseCheck.Blocked(count = count, total = total)
+        }
+    }
 
     init {
         // Load transactions when shift changes
@@ -146,6 +171,7 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     val frozenShift = activeShift.copy(
                         status = "FROZEN",
                         cutoff_timestamp = cutoffTime,
+                        frozen_at = cutoffTime,        // v6: record freeze time
                         updated_at = System.currentTimeMillis()
                     )
 
@@ -213,27 +239,30 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                 Log.d("SHIFT_CLOSE", "🔒 Final cutoff timestamp: $cutoffTime")
 
-                // ============================================
-                // NEW RECONCILIATION CALCULATION
-                // ============================================
+                // ── v6: Block close if UNASSIGNED transactions exist ─────────
+                val closeCheck = canCloseShift(shiftId)
+                if (closeCheck is ShiftCloseCheck.Blocked) {
+                    withContext(Dispatchers.Main) {
+                        onError(
+                            "Cannot close shift.\n" +
+                                    "${closeCheck.count} unassigned transaction(s) " +
+                                    "totalling Ksh ${String.format("%,.0f", closeCheck.total)}.\n" +
+                                    "Assign all transactions before closing."
+                        )
+                    }
+                    return@launch
+                }
 
-                // 1. Net change in account
+                // ── v6: NEW RECONCILIATION FORMULA ───────────────────────────
+                // Expected Float = Closing Balance - Opening Balance + Money Out
+                // Money Out      = sum of all OUT direction transactions
+                // Grand Total    = sum of all assigned IN transactions
+                // Variance       = Expected Float - Grand Total
+
+                val moneySentOut = transactionDao.getMoneyOut(shiftId)
+                val expectedReceipts = closingBalance - shift.open_balance + moneySentOut
+                val actualReceipts = transactionDao.getGrandTotal(shiftId)
                 val netChange = closingBalance - shift.open_balance
-
-                // 2. Money sent out (only SENT transactions - transfers)
-                val moneySentOut = shiftTransactions
-                    .filter { it.transaction_type == "SENT" }
-                    .sumOf { abs(it.amount) }  // Use absolute value
-
-                // 3. Expected customer receipts
-                val expectedReceipts = netChange + moneySentOut
-
-                // 4. Actual recorded receipts (only RECEIVED transactions)
-                val actualReceipts = shiftTransactions
-                    .filter { it.transaction_type == "RECEIVED" }
-                    .sumOf { it.amount }
-
-                // 5. Calculate variance
                 val variance = expectedReceipts - actualReceipts
 
                 // ============================================
@@ -283,9 +312,13 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 // Get updated shift for sync
                 val updatedShift = shiftDao.getShiftByIdDirect(shiftId)
                 if (updatedShift != null) {
-                    // Derive CSA assignments from transaction assigned_to values
+                    // Derive CSA assignments — only IN transactions assigned to a CSA
                     val derivedAssignments = shiftTransactions
-                        .filter { !it.assigned_to.isNullOrBlank() && it.assigned_to != "Neutral" }
+                        .filter {
+                            !it.assigned_to.isNullOrBlank() &&
+                                    it.role != TransactionRole.DUPLICATE &&
+                                    it.role != TransactionRole.UNASSIGNED
+                        }
                         .groupBy { it.assigned_to!! }
                         .map { (personName, _) ->
                             ShiftAssignment(
@@ -353,15 +386,11 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     // Get all transactions in this shift
                     val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
 
-                    // Recalculate reconciliation with new closing balance
+                    // ── v6: recalculate using role-based formula ──────────────
                     val netChange = newClosingBalance - shift.open_balance
-                    val moneySentOut = shiftTransactions
-                        .filter { it.transaction_type == "SENT" }
-                        .sumOf { abs(it.amount) }
+                    val moneySentOut = transactionDao.getMoneyOut(shiftId)
                     val expectedReceipts = netChange + moneySentOut
-                    val actualReceipts = shiftTransactions
-                        .filter { it.transaction_type == "RECEIVED" }
-                        .sumOf { it.amount }
+                    val actualReceipts = transactionDao.getGrandTotal(shiftId)
                     val variance = expectedReceipts - actualReceipts
 
                     Log.d(TAG, "📝 Updating closing balance for Shift #$shiftId")
@@ -417,8 +446,8 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val transactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
 
-                val unassigned = transactions.filter { it.assigned_to.isNullOrBlank() }
-                val assigned = transactions.filter { !it.assigned_to.isNullOrBlank() }
+                val unassigned = transactions.filter { it.role == TransactionRole.UNASSIGNED }
+                val assigned = transactions.filter { it.role != TransactionRole.UNASSIGNED }
 
                 _unassignedTransactions.value = unassigned
                 _assignedTransactions.value = assigned
@@ -474,16 +503,25 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun assignTransactions(transactionIds: List<Long>, personName: String, category: String) {
+    fun assignTransactions(
+        transactionIds: List<Long>,
+        personName: String,
+        role: TransactionRole
+    ) {
         viewModelScope.launch {
             try {
                 transactionIds.forEach { id ->
-                    transactionDao.assignTransaction(id, personName, category)
+                    transactionDao.assignTransactionWithRole(
+                        transactionId = id,
+                        personName = personName,
+                        role = role.name,
+                        direction = role.toDirection().name,
+                        includedInReconciliation = role.includedInReconciliation()
+                    )
                 }
 
-                Log.d(TAG, "✅ Assigned ${transactionIds.size} transactions to $personName")
+                Log.d(TAG, "✅ Assigned ${transactionIds.size} transactions to $personName as $role")
 
-                // Backup each assigned transaction to Supabase
                 transactionIds.forEach { id ->
                     val txn = transactionDao.getTransactionById(id)
                     if (txn != null) {
@@ -491,7 +529,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                // Reload UI transactions
                 currentShift.value?.let { shift ->
                     loadShiftTransactions(shift.shift_id)
                 }
@@ -624,15 +661,16 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             val persons = personDao.getAllPersons().value ?: emptyList()
 
             persons.forEach { person ->
-                val total = transactionDao.getTotalByShiftAndPerson(shiftId, person.short_name) ?: 0.0
+                val total = transactionDao.getCsaTotal(shiftId, person.short_name)
                 if (total > 0) {
                     breakdown[person.short_name] = total
                 }
             }
 
-            val internalTransfers = transactionDao.getTotalByShiftAndCategory(shiftId, "NEUTRAL") ?: 0.0
-            if (internalTransfers != 0.0) {
-                breakdown["Neutral Transactions"] = internalTransfers
+            // Add money out breakdown
+            val moneyOut = transactionDao.getMoneyOut(shiftId)
+            if (moneyOut > 0) {
+                breakdown["Money Out (Transfers/Withdrawals)"] = moneyOut
             }
 
         } catch (e: Exception) {

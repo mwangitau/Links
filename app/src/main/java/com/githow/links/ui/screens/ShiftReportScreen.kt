@@ -15,6 +15,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.githow.links.data.database.LinksDatabase
+import com.githow.links.data.entity.TransactionDirection
+import com.githow.links.data.entity.TransactionRole
 import com.githow.links.viewmodel.ShiftViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -106,38 +108,17 @@ fun ShiftReportScreen(
                     transactionCount = item.count,
                     transactions = shiftTransactions.filter {
                         it.assigned_to == item.name &&
-                                it.transaction_type == "RECEIVED"
+                                it.direction == TransactionDirection.IN &&
+                                it.role != TransactionRole.DUPLICATE
                     }
                 )
             }
 
-            // Internal Transfers (Neutral - don't affect reconciliation)
-            if (breakdown.internalTransferCount > 0) {
+            // Money Out — Transfers, Withdrawals, Reversals
+            if (breakdown.transfers > 0 || breakdown.withdrawals > 0 || breakdown.reversals > 0) {
                 item {
                     Text(
-                        text = "Neutral Transactions",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                }
-
-                item {
-                    CollectionItemCard(
-                        title = "Internal Transfers (Net)",
-                        amount = breakdown.internalTransfers,
-                        count = breakdown.internalTransferCount,
-                        icon = Icons.Default.Send,
-                        isOutflow = breakdown.internalTransfers < 0
-                    )
-                }
-            }
-
-            // Transfers/Withdrawals
-            if (breakdown.transfers > 0 || breakdown.withdrawals > 0) {
-                item {
-                    Text(
-                        text = "Money Movements",
+                        text = "Money Out",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 8.dp)
@@ -147,10 +128,10 @@ fun ShiftReportScreen(
                 if (breakdown.transfers > 0) {
                     item {
                         CollectionItemCard(
-                            title = "Transfers",
+                            title = "Till Transfers Out",
                             amount = breakdown.transfers,
                             count = breakdown.transferCount,
-                            icon = Icons.Default.Call,
+                            icon = Icons.Default.Send,
                             isOutflow = true
                         )
                     }
@@ -167,14 +148,42 @@ fun ShiftReportScreen(
                         )
                     }
                 }
+
+                if (breakdown.reversals > 0) {
+                    item {
+                        CollectionItemCard(
+                            title = "Reversals",
+                            amount = breakdown.reversals,
+                            count = breakdown.reversalCount,
+                            icon = Icons.Default.Warning,
+                            isOutflow = true
+                        )
+                    }
+                }
             }
 
-            // Reconciliation Card - FIXED: Use correct field names
+            // Duplicates — excluded from totals
+            if (breakdown.duplicateCount > 0) {
+                item {
+                    CollectionItemCard(
+                        title = "Duplicates (Excluded)",
+                        amount = breakdown.duplicateTotal,
+                        count = breakdown.duplicateCount,
+                        icon = Icons.Default.Info,
+                        isOutflow = false
+                    )
+                }
+            }
+
+            // Reconciliation Card
             item {
                 ReconciliationCard(
-                    expected = shift!!.expected_receipts ?: 0.0,
-                    actual = shift!!.actual_receipts ?: 0.0,
-                    difference = shift!!.variance ?: 0.0
+                    openingBalance = shift!!.open_balance,
+                    closingBalance = shift!!.close_balance ?: 0.0,
+                    moneyOut = shift!!.money_sent_out ?: 0.0,
+                    expectedFloat = shift!!.expected_receipts ?: 0.0,
+                    grandTotal = shift!!.actual_receipts ?: 0.0,
+                    variance = shift!!.variance ?: 0.0
                 )
             }
         }
@@ -541,14 +550,17 @@ fun TransactionDetailRow(transaction: com.githow.links.data.entity.Transaction) 
 
 @Composable
 fun ReconciliationCard(
-    expected: Double,
-    actual: Double,
-    difference: Double
+    openingBalance: Double,
+    closingBalance: Double,
+    moneyOut: Double,
+    expectedFloat: Double,
+    grandTotal: Double,
+    variance: Double
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (difference == 0.0)
+            containerColor = if (variance == 0.0)
                 MaterialTheme.colorScheme.primaryContainer
             else
                 MaterialTheme.colorScheme.errorContainer
@@ -566,9 +578,14 @@ fun ReconciliationCard(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            BalanceRow("Expected Total", expected, false)
+            // Formula breakdown
+            BalanceRow("Closing Balance", closingBalance, false)
+            BalanceRow("− Opening Balance", openingBalance, false)
+            BalanceRow("+ Money Out", moneyOut, false)
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            BalanceRow("= Expected Float", expectedFloat, true)
             Spacer(modifier = Modifier.height(8.dp))
-            BalanceRow("Actual Total", actual, false)
+            BalanceRow("Grand Total (Assigned)", grandTotal, false)
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -578,7 +595,7 @@ fun ReconciliationCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Difference",
+                    text = "Variance",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -587,15 +604,15 @@ fun ReconciliationCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = formatAmount(difference),
+                        text = formatAmount(variance),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = if (difference == 0.0)
+                        color = if (variance == 0.0)
                             MaterialTheme.colorScheme.primary
                         else
                             MaterialTheme.colorScheme.error
                     )
-                    if (difference == 0.0) {
+                    if (variance == 0.0) {
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = "Balanced",
@@ -623,28 +640,31 @@ data class CSACollection(
 
 data class ShiftBreakdown(
     val csaCollections: List<CSACollection>,
-    val internalTransfers: Double,
-    val internalTransferCount: Int,
     val transfers: Double,
     val transferCount: Int,
     val withdrawals: Double,
-    val withdrawalCount: Int
+    val withdrawalCount: Int,
+    val reversals: Double,
+    val reversalCount: Int,
+    val duplicateTotal: Double,
+    val duplicateCount: Int
 )
 
-// Helper function to calculate breakdown
+// ─────────────────────────────────────────────────────────────────────────────
+// Calculate breakdown using role-based filtering — v6
+// ─────────────────────────────────────────────────────────────────────────────
 private fun calculateBreakdown(
     transactions: List<com.githow.links.data.entity.Transaction>,
     persons: List<com.githow.links.data.entity.Person>
 ): ShiftBreakdown {
     val csaCollections = mutableListOf<CSACollection>()
 
-    // Only include RECEIVED transactions that are assigned to CSAs (collections)
-    // Exclude NEUTRAL transactions (internal transfers that don't affect reconciliation)
+    // CSA collections — IN transactions assigned to a CSA, excluding DUPLICATE
     persons.forEach { person ->
         val personTxs = transactions.filter {
             it.assigned_to == person.short_name &&
-                    it.transaction_type == "RECEIVED" &&
-                    it.transaction_category != "NEUTRAL"  // Exclude neutral transactions
+                    it.direction == TransactionDirection.IN &&
+                    it.role != TransactionRole.DUPLICATE
         }
         if (personTxs.isNotEmpty()) {
             csaCollections.add(
@@ -657,39 +677,28 @@ private fun calculateBreakdown(
         }
     }
 
-    // Internal Transfers - Money sent to other internal accounts (auto-assigned as Neutral)
-    // SENT side is negative (money OUT), RECEIVED side is positive (money IN)
-    // They cancel out, so we just track them for visibility
-    val internalTransferTxs = transactions.filter {
-        it.transaction_category == "NEUTRAL"
-    }
-    val internalTransfers = internalTransferTxs.sumOf { it.amount }  // SENT is negative, RECEIVED is positive
-    val internalTransferCount = internalTransferTxs.size
+    // Till Transfer Out
+    val transferTxs = transactions.filter { it.role == TransactionRole.TILL_TRANSFER_OUT }
 
-    // Transfers - Money sent to other M-PESA accounts (outflows)
-    val transferTxs = transactions.filter {
-        it.transaction_type == "SENT" &&
-                it.transaction_category == "TRANSFER"
-    }
-    val transfers = transferTxs.sumOf { it.amount }
-    val transferCount = transferTxs.size
+    // Withdrawals
+    val withdrawalTxs = transactions.filter { it.role == TransactionRole.WITHDRAWAL }
 
-    // Withdrawals - Money taken from agent (outflows)
-    val withdrawalTxs = transactions.filter {
-        it.transaction_type == "WITHDRAWN" ||
-                it.transaction_category == "WITHDRAWAL"
-    }
-    val withdrawals = withdrawalTxs.sumOf { it.amount }
-    val withdrawalCount = withdrawalTxs.size
+    // Reversals
+    val reversalTxs = transactions.filter { it.role == TransactionRole.REVERSAL }
+
+    // Duplicates
+    val duplicateTxs = transactions.filter { it.role == TransactionRole.DUPLICATE }
 
     return ShiftBreakdown(
         csaCollections = csaCollections.sortedByDescending { it.amount },
-        internalTransfers = internalTransfers,
-        internalTransferCount = internalTransferCount,
-        transfers = transfers,
-        transferCount = transferCount,
-        withdrawals = withdrawals,
-        withdrawalCount = withdrawalCount
+        transfers = transferTxs.sumOf { it.amount },
+        transferCount = transferTxs.size,
+        withdrawals = withdrawalTxs.sumOf { it.amount },
+        withdrawalCount = withdrawalTxs.size,
+        reversals = reversalTxs.sumOf { it.amount },
+        reversalCount = reversalTxs.size,
+        duplicateTotal = duplicateTxs.sumOf { it.amount },
+        duplicateCount = duplicateTxs.size
     )
 }
 

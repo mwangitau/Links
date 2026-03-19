@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.githow.links.data.entity.TransactionRole
 import com.githow.links.viewmodel.ShiftViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -52,11 +53,17 @@ fun CloseShiftScreen(
 
     val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
 
-    // Use CORRECT field names from Transaction entity
-    val totalReceived = shiftTransactions.filter { it.transaction_type == "RECEIVED" }.sumOf { it.amount }
-    val totalTransfers = shiftTransactions.filter { it.transaction_type == "SENT" }.sumOf { it.amount }
-    val totalWithdrawals = shiftTransactions.filter { it.transaction_type == "WITHDRAW" }.sumOf { it.amount }
-    val unassignedCount = shiftTransactions.count { it.assigned_to.isNullOrBlank() }
+    // v6: use role-based filtering — amounts are always positive
+    val totalReceived = shiftTransactions
+        .filter { it.direction == com.githow.links.data.entity.TransactionDirection.IN }
+        .sumOf { it.amount }
+    val totalTransfers = shiftTransactions
+        .filter { it.role == TransactionRole.TILL_TRANSFER_OUT }
+        .sumOf { it.amount }
+    val totalWithdrawals = shiftTransactions
+        .filter { it.role == TransactionRole.WITHDRAWAL || it.role == TransactionRole.REVERSAL }
+        .sumOf { it.amount }
+    val unassignedCount = shiftTransactions.count { it.role == TransactionRole.UNASSIGNED }
 
     Scaffold(
         topBar = {

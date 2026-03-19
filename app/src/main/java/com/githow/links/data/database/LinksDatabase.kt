@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
         ManualReviewQueue::class,  // NEW in v3.0
         User::class                 // NEW in v3.0
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -68,7 +68,7 @@ abstract class LinksDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .addCallback(DatabaseCallback(context))
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
 
                 INSTANCE = instance
@@ -186,5 +186,25 @@ class Converters {
     @androidx.room.TypeConverter
     fun toEntrySource(value: String): EntrySource {
         return EntrySource.valueOf(value)
+    }
+
+    @androidx.room.TypeConverter
+    fun fromTransactionRole(value: TransactionRole): String {
+        return value.name
+    }
+
+    @androidx.room.TypeConverter
+    fun toTransactionRole(value: String): TransactionRole {
+        return TransactionRole.valueOf(value)
+    }
+
+    @androidx.room.TypeConverter
+    fun fromTransactionDirection(value: TransactionDirection): String {
+        return value.name
+    }
+
+    @androidx.room.TypeConverter
+    fun toTransactionDirection(value: String): TransactionDirection {
+        return TransactionDirection.valueOf(value)
     }
 }

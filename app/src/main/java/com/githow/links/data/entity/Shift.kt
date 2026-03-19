@@ -12,6 +12,7 @@ data class Shift(
     val open_balance: Double,
     val close_balance: Double? = null,
     val cutoff_timestamp: Long? = null,
+    val frozen_at: Long? = null,       // v6: timestamp when shift was FROZEN
     val status: String = "ACTIVE",
     val net_change: Double = 0.0,
     val money_sent_out: Double = 0.0,

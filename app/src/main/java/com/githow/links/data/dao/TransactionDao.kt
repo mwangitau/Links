@@ -97,6 +97,96 @@ interface TransactionDao {
     @Query("UPDATE transactions SET assigned_to = NULL, transaction_category = NULL WHERE id = :transactionId")
     suspend fun unassignTransaction(transactionId: Long)
 
+    // ── v6: Role-based assignment ─────────────────────────────────────────────
+
+    /**
+     * Assign a transaction: sets CSA, role, direction, and reconciliation flag
+     * This is the main assignment call — use this instead of assignTransaction()
+     */
+    @Query("""
+        UPDATE transactions
+        SET assigned_to = :personName,
+            role = :role,
+            direction = :direction,
+            included_in_reconciliation = :includedInReconciliation,
+            last_modified_at = :modifiedAt,
+            status = 'assigned'
+        WHERE id = :transactionId
+    """)
+    suspend fun assignTransactionWithRole(
+        transactionId: Long,
+        personName: String?,
+        role: String,
+        direction: String,
+        includedInReconciliation: Boolean,
+        modifiedAt: Long = System.currentTimeMillis()
+    )
+
+    /**
+     * Count UNASSIGNED transactions for a shift — used to gate shift close
+     */
+    @Query("""
+        SELECT COUNT(*) FROM transactions
+        WHERE shift_id = :shiftId
+        AND role = 'UNASSIGNED'
+    """)
+    suspend fun countUnassigned(shiftId: Long): Int
+
+    /**
+     * Sum of UNASSIGNED amounts for a shift — shown in the blocking dialog
+     */
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0) FROM transactions
+        WHERE shift_id = :shiftId
+        AND role = 'UNASSIGNED'
+    """)
+    suspend fun sumUnassigned(shiftId: Long): Double
+
+    /**
+     * Money Out for a shift = sum of all OUT direction transactions
+     */
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0) FROM transactions
+        WHERE shift_id = :shiftId
+        AND direction = 'OUT'
+    """)
+    suspend fun getMoneyOut(shiftId: Long): Double
+
+    /**
+     * Grand Total for a shift = sum of all assigned IN transactions (excluding DUPLICATE)
+     */
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0) FROM transactions
+        WHERE shift_id = :shiftId
+        AND direction = 'IN'
+        AND assigned_to IS NOT NULL
+        AND role != 'DUPLICATE'
+    """)
+    suspend fun getGrandTotal(shiftId: Long): Double
+
+    /**
+     * Per-CSA total for a shift
+     */
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0) FROM transactions
+        WHERE shift_id = :shiftId
+        AND direction = 'IN'
+        AND assigned_to = :personName
+        AND role != 'DUPLICATE'
+    """)
+    suspend fun getCsaTotal(shiftId: Long, personName: String): Double
+
+    /**
+     * Get all UNASSIGNED transactions for a shift (for the blocking dialog list)
+     */
+    @Query("""
+        SELECT * FROM transactions
+        WHERE shift_id = :shiftId
+        AND role = 'UNASSIGNED'
+        ORDER BY timestamp ASC
+    """)
+    fun getUnassignedByShift(shiftId: Long): androidx.lifecycle.LiveData<List<Transaction>>
+
     // ============ SHIFT OPERATIONS ============
 
     @Insert

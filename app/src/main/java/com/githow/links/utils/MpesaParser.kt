@@ -2,6 +2,9 @@ package com.githow.links.utils
 
 import android.util.Log
 import com.githow.links.data.entity.Transaction
+import com.githow.links.data.entity.TransactionRole
+import com.githow.links.data.entity.transactionTypeToRole
+import com.githow.links.data.entity.withRole
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -61,16 +64,10 @@ object MpesaParser {
                 return tryTruncatedParsing(messageBody)
             }
 
-            // CRITICAL: Money going OUT should be NEGATIVE
-            val amount = when (transactionType) {
-                "REVERSAL" -> -rawAmount  // Money being taken back
-                "SENT" -> -rawAmount      // Money sent to others
-                "WITHDRAW" -> -rawAmount  // Cash withdrawn
-                "AIRTIME" -> -rawAmount   // Airtime purchased
-                "BILL_PAYMENT" -> -rawAmount  // Bills paid
-                "BUY_GOODS" -> -rawAmount     // Goods purchased
-                else -> rawAmount  // RECEIVED, DEPOSIT = money IN (positive)
-            }
+            // ── v3.0: amounts are ALWAYS positive ────────────────────────────
+            // Direction (IN/OUT) is determined by role, not sign.
+            // The manager assigns role on the assignment screen.
+            val amount = rawAmount
 
             // Extract original transaction code if this is a reversal
             val originalTransactionCode = if (transactionType == "REVERSAL") {
@@ -111,104 +108,30 @@ object MpesaParser {
             val senderInfo = extractSenderInfo(cleanedMessage, transactionType)
 
             // ====================================================================
-            // STEP 8: Check for settlements and internal transfers
+            // STEP 8: Derive initial role from transaction type
+            // ── v3.0: No hardcoded paybill lists, no auto-assignment to Neutral.
+            //          Everything captured as-is; manager assigns role on screen.
             // ====================================================================
 
-            // SETTLEMENT DETECTION - These are internal money movements
-            // Rule 1: "received as settlement" = HIDE (duplicate message, not real money IN)
-            // Rule 2: "settled to" or "Sent to" = Money OUT, auto-assign to Neutral
-
-            val isSettlementReceived = cleanedMessage.contains("received as settlement", ignoreCase = true)
-            val isSettlementSent = cleanedMessage.contains("settled to", ignoreCase = true) ||
-                    cleanedMessage.contains("Sent to", ignoreCase = true)
-
-            // INTERNAL_PAYBILLS: Your business paybill numbers
-            val INTERNAL_PAYBILLS = listOf("5176352", "5176338")
-
-            // Check if this is an internal transfer or settlement
-            val isInternalTransfer = when {
-                isSettlementReceived -> true  // Settlement received (will be hidden)
-                isSettlementSent -> true      // Settlement sent (money OUT)
-                transactionType == "SENT" && messageBody.contains("Sent to", ignoreCase = true) -> true
-                transactionType == "RECEIVED" -> senderInfo.paybillNumber?.let {
-                    INTERNAL_PAYBILLS.contains(it)  // RECEIVED from internal paybill
-                } ?: false
-                else -> false
-            }
-
-            // HIDING LOGIC:
-            // ALWAYS hide "received as settlement" messages - they're duplicates
-            val isHidden = isSettlementReceived
-
-            if (isInternalTransfer) {
-                when {
-                    isSettlementReceived -> Log.d(TAG, "🔄 Settlement RECEIVED - will be HIDDEN (duplicate)")
-                    isSettlementSent -> Log.d(TAG, "🔄 Settlement SENT - will be NEUTRAL (money OUT)")
-                    transactionType == "RECEIVED" -> Log.d(TAG, "🔄 Internal transfer RECEIVED - will be NEUTRAL")
-                    transactionType == "SENT" -> Log.d(TAG, "🔄 Internal transfer SENT - will be NEUTRAL")
-                }
-            }
+            val initialRole = transactionTypeToRole(transactionType)
 
             // ====================================================================
-            // STEP 9: Determine transaction category
-            // ====================================================================
-
-            val transactionCategory = when {
-                transactionType == "REVERSAL" -> "REVERSAL"  // Critical for variance tracking!
-                isInternalTransfer -> "NEUTRAL"  // Internal transfers - don't affect reconciliation
-                transactionType == "SENT" -> "WITHDRAWAL"     // Money OUT
-                transactionType == "WITHDRAW" -> "WITHDRAWAL" // Money OUT (same as SENT)
-                transactionType == "DEPOSIT" -> "DEPOSIT"
-                transactionType == "AIRTIME" -> "WITHDRAWAL"  // Money OUT
-                transactionType == "BILL_PAYMENT" -> "WITHDRAWAL"  // Money OUT
-                transactionType == "BUY_GOODS" -> "WITHDRAWAL"     // Money OUT
-                else -> null  // Will be assigned later (CSA, etc.)
-            }
-
-            // ====================================================================
-            // STEP 9.5: Auto-assign internal transfers as NEUTRAL
-            // ====================================================================
-
-            // Auto-assign both sides of internal transfers to "Neutral"
-            val assignedTo = if (isInternalTransfer) {
-                "Neutral"
-            } else {
-                null  // Will be assigned manually by user
-            }
-
-            // ====================================================================
-            // STEP 10: Create timestamp
+            // STEP 9: Create timestamp
             // ====================================================================
 
             val timestamp = convertToTimestamp(dateReceived, timeReceived)
 
-            Log.d(TAG, "✅ Parsed successfully: $mpesaCode - Ksh$amount - $transactionType" +
-                    if (isHidden) " (HIDDEN)" else "" +
-                            if (assignedTo != null) " - AUTO-ASSIGNED to: $assignedTo" else "")
+            Log.d(TAG, "✅ Parsed: $mpesaCode Ksh$amount $transactionType → role=$initialRole")
 
-            // WARNING for money going OUT (negative amounts)
-            when (transactionType) {
-                "REVERSAL" -> {
-                    Log.w(TAG, "⚠️⚠️⚠️ REVERSAL DETECTED! Money being taken back: Ksh$amount")
-                    Log.w(TAG, "⚠️ Original transaction: ${originalTransactionCode ?: "Unknown"}")
-                    Log.w(TAG, "⚠️ This will REDUCE your balance!")
-                }
-                "SENT" -> {
-                    Log.w(TAG, "💸 SENT: Money going OUT - Ksh$amount")
-                }
-                "WITHDRAW" -> {
-                    Log.w(TAG, "💸 WITHDRAW: Money going OUT - Ksh$amount")
-                }
-                "AIRTIME", "BILL_PAYMENT", "BUY_GOODS" -> {
-                    Log.w(TAG, "💸 $transactionType: Money going OUT - Ksh$amount")
-                }
+            if (transactionType == "REVERSAL") {
+                Log.w(TAG, "⚠️ REVERSAL: original=${originalTransactionCode ?: "Unknown"}")
             }
 
             // ====================================================================
-            // RETURN: Create Transaction entity
+            // RETURN: Create Transaction entity and apply initial role
             // ====================================================================
 
-            return Transaction(
+            val transaction = Transaction(
                 mpesa_code = mpesaCode,
                 amount = amount,
                 sender_phone = senderInfo.senderPhone,
@@ -222,12 +145,14 @@ object MpesaParser {
                 transaction_cost = transactionCost,
                 sms_body = messageBody,
                 transaction_type = transactionType,
-                assigned_to = assignedTo,  // Auto-assign internal transfers
-                transaction_category = transactionCategory,
-                is_hidden = isHidden,
-                is_internal_transfer = isInternalTransfer,
-                status = if (assignedTo != null) "assigned" else "pending"  // If auto-assigned, mark as assigned
+                assigned_to = null,           // always null — manager assigns
+                transaction_category = null,  // always null — derived from role
+                is_hidden = false,            // nothing hidden automatically
+                is_internal_transfer = false, // manager decides via role
+                status = "pending"
             )
+
+            return transaction.withRole(initialRole)
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Parsing error: ${e.message}", e)
@@ -949,9 +874,9 @@ object MpesaParser {
             Log.w(TAG, "  📋 Status: NEEDS MANUAL REVIEW")
 
             // Return partial transaction flagged for review
-            return Transaction(
+            val truncatedTxn = Transaction(
                 mpesa_code = mpesaCode,
-                amount = amount,
+                amount = amount,          // always positive — direction from role
                 sender_phone = phone,
                 sender_name = senderName ?: "INCOMPLETE DATA - NEEDS REVIEW",
                 paybill_number = null,
@@ -959,16 +884,18 @@ object MpesaParser {
                 timestamp = timestamp,
                 date_received = dateReceived,
                 time_received = timeReceived,
-                account_balance = 0.0,  // Missing from truncated message
-                transaction_cost = 0.0,  // Missing from truncated message
+                account_balance = 0.0,
+                transaction_cost = 0.0,
                 sms_body = message,
                 transaction_type = "RECEIVED",
                 assigned_to = null,
                 transaction_category = null,
                 is_hidden = false,
                 is_internal_transfer = false,
-                status = "needs_review"  // ✅ Flag for manual review
+                status = "needs_review"
             )
+            // Truncated messages default to UNASSIGNED — manager must review
+            return truncatedTxn.withRole(TransactionRole.UNASSIGNED)
         } catch (e: Exception) {
             Log.e(TAG, "❌ Truncated parsing also failed: ${e.message}")
             return null

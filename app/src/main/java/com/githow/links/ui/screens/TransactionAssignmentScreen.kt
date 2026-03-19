@@ -12,11 +12,71 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Transaction
+import com.githow.links.data.entity.TransactionDirection
+import com.githow.links.data.entity.TransactionRole
 import com.githow.links.viewmodel.ShiftViewModel
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Role display helpers
+// ─────────────────────────────────────────────────────────────────────────────
+private fun TransactionRole.displayName(): String = when (this) {
+    TransactionRole.CUSTOMER_RECEIPT  -> "Customer Receipt"
+    TransactionRole.TILL_TRANSFER_IN  -> "Till Transfer In"
+    TransactionRole.WITHDRAWAL        -> "Withdrawal"
+    TransactionRole.REVERSAL          -> "Reversal"
+    TransactionRole.TILL_TRANSFER_OUT -> "Till Transfer Out"
+    TransactionRole.DUPLICATE         -> "Duplicate"
+    TransactionRole.UNASSIGNED        -> "Unassigned"
+}
+
+private fun TransactionRole.directionLabel(): String = when (this) {
+    TransactionRole.CUSTOMER_RECEIPT,
+    TransactionRole.TILL_TRANSFER_IN  -> "IN +"
+    TransactionRole.WITHDRAWAL,
+    TransactionRole.REVERSAL,
+    TransactionRole.TILL_TRANSFER_OUT -> "OUT −"
+    TransactionRole.DUPLICATE         -> "EXCLUDED"
+    TransactionRole.UNASSIGNED        -> "PENDING"
+}
+
+private fun TransactionRole.directionColor(
+    primary: Color,
+    error: Color,
+    outline: Color
+): Color = when (this) {
+    TransactionRole.CUSTOMER_RECEIPT,
+    TransactionRole.TILL_TRANSFER_IN  -> primary
+    TransactionRole.WITHDRAWAL,
+    TransactionRole.REVERSAL,
+    TransactionRole.TILL_TRANSFER_OUT -> error
+    else                               -> outline
+}
+
+// Roles that require a CSA to be selected
+private fun TransactionRole.requiresCsa(): Boolean = when (this) {
+    TransactionRole.CUSTOMER_RECEIPT  -> true
+    TransactionRole.TILL_TRANSFER_IN  -> true
+    TransactionRole.WITHDRAWAL        -> true
+    TransactionRole.REVERSAL          -> true
+    TransactionRole.TILL_TRANSFER_OUT -> true
+    TransactionRole.DUPLICATE         -> false
+    TransactionRole.UNASSIGNED        -> false
+}
+
+// Assignable roles — UNASSIGNED is not a valid target
+private val ASSIGNABLE_ROLES = listOf(
+    TransactionRole.CUSTOMER_RECEIPT,
+    TransactionRole.TILL_TRANSFER_IN,
+    TransactionRole.WITHDRAWAL,
+    TransactionRole.REVERSAL,
+    TransactionRole.TILL_TRANSFER_OUT,
+    TransactionRole.DUPLICATE
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,8 +93,7 @@ fun TransactionAssignmentScreen(
     var showAssignDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
-    var selectedPerson by remember { mutableStateOf<String?>(null) }
-    var filterType by remember { mutableStateOf("unassigned") }  // unassigned, assigned, all
+    var filterType by remember { mutableStateOf("unassigned") }
 
     Scaffold(
         topBar = {
@@ -85,17 +144,18 @@ fun TransactionAssignmentScreen(
             // Filter Chips
             FilterChips(
                 selected = filterType,
+                unassignedCount = unassignedTransactions.size,
                 onFilterChange = {
                     filterType = it
-                    selectedTransactions = setOf()  // Clear selection on filter change
+                    selectedTransactions = setOf()
                 }
             )
 
             // Transaction List
             val displayTransactions = when (filterType) {
                 "unassigned" -> unassignedTransactions
-                "assigned" -> assignedTransactions
-                else -> unassignedTransactions + assignedTransactions
+                "assigned"   -> assignedTransactions
+                else         -> unassignedTransactions + assignedTransactions
             }
 
             if (displayTransactions.isEmpty()) {
@@ -106,20 +166,22 @@ fun TransactionAssignmentScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(displayTransactions) { transaction ->
+                    items(displayTransactions, key = { it.id }) { transaction ->
                         AssignableTransactionCard(
                             transaction = transaction,
                             isSelected = selectedTransactions.contains(transaction.id),
                             onToggleSelection = {
-                                selectedTransactions = if (selectedTransactions.contains(transaction.id)) {
-                                    selectedTransactions - transaction.id
-                                } else {
-                                    selectedTransactions + transaction.id
+                                // Only unassigned transactions can be batch-selected
+                                if (transaction.role == TransactionRole.UNASSIGNED) {
+                                    selectedTransactions = if (selectedTransactions.contains(transaction.id)) {
+                                        selectedTransactions - transaction.id
+                                    } else {
+                                        selectedTransactions + transaction.id
+                                    }
                                 }
                             },
                             onEdit = {
                                 transactionToEdit = transaction
-                                selectedPerson = transaction.assigned_to
                                 showEditDialog = true
                             }
                         )
@@ -129,65 +191,56 @@ fun TransactionAssignmentScreen(
         }
     }
 
-    // Assignment Dialog
+    // Batch Assignment Dialog
     if (showAssignDialog) {
         AssignmentDialog(
             persons = persons,
-            selectedPerson = selectedPerson,
-            onPersonSelected = { selectedPerson = it },
+            transactionCount = selectedTransactions.size,
             onDismiss = {
                 showAssignDialog = false
-                selectedPerson = null
             },
-            onConfirm = {
-                if (selectedPerson != null) {
-                    viewModel.assignTransactions(
-                        transactionIds = selectedTransactions.toList(),
-                        personName = selectedPerson!!,
-                        category = if (selectedPerson == "Neutral") "NEUTRAL" else "CSA"
-                    )
-                    selectedTransactions = setOf()
-                    showAssignDialog = false
-                    selectedPerson = null
-                }
+            onConfirm = { role, personName ->
+                viewModel.assignTransactions(
+                    transactionIds = selectedTransactions.toList(),
+                    personName = personName ?: "",
+                    role = role
+                )
+                selectedTransactions = setOf()
+                showAssignDialog = false
             }
         )
     }
 
-    // Edit Dialog
+    // Edit Single Transaction Dialog
     if (showEditDialog && transactionToEdit != null) {
         EditAssignmentDialog(
             transaction = transactionToEdit!!,
             persons = persons,
-            currentAssignment = selectedPerson,
-            onPersonSelected = { selectedPerson = it },
             onDismiss = {
                 showEditDialog = false
                 transactionToEdit = null
-                selectedPerson = null
             },
-            onConfirm = {
-                if (selectedPerson != null) {
-                    viewModel.reassignTransaction(
-                        transactionId = transactionToEdit!!.id,
-                        newPersonName = selectedPerson!!,
-                        newCategory = if (selectedPerson == "Neutral") "NEUTRAL" else "CSA"
-                    )
-                    showEditDialog = false
-                    transactionToEdit = null
-                    selectedPerson = null
-                }
+            onConfirm = { role, personName ->
+                viewModel.assignTransactions(
+                    transactionIds = listOf(transactionToEdit!!.id),
+                    personName = personName ?: "",
+                    role = role
+                )
+                showEditDialog = false
+                transactionToEdit = null
             },
             onUnassign = {
                 viewModel.unassignTransaction(transactionToEdit!!.id)
                 showEditDialog = false
                 transactionToEdit = null
-                selectedPerson = null
             }
         )
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Summary Card
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignmentSummaryCard(
     totalUnassigned: Int,
@@ -199,7 +252,10 @@ fun AssignmentSummaryCard(
             .fillMaxWidth()
             .padding(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
+            containerColor = if (totalUnassigned > 0)
+                MaterialTheme.colorScheme.errorContainer
+            else
+                MaterialTheme.colorScheme.secondaryContainer
         )
     ) {
         Row(
@@ -213,12 +269,12 @@ fun AssignmentSummaryCard(
                     text = "$totalUnassigned",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (totalUnassigned > 0)
+                        MaterialTheme.colorScheme.error
+                    else
+                        MaterialTheme.colorScheme.primary
                 )
-                Text(
-                    text = "Unassigned",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text(text = "Unassigned", style = MaterialTheme.typography.bodySmall)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -226,30 +282,42 @@ fun AssignmentSummaryCard(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    text = "Assigned",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text(text = "Assigned", style = MaterialTheme.typography.bodySmall)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = formatAmount(unassignedAmount),
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = if (totalUnassigned > 0)
+                        MaterialTheme.colorScheme.error
+                    else
+                        MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    text = "Pending",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text(text = "Pending", style = MaterialTheme.typography.bodySmall)
             }
+        }
+        if (totalUnassigned > 0) {
+            Text(
+                text = "⚠ Assign all transactions before closing shift",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 12.dp)
+            )
         }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Filter Chips
+// ─────────────────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilterChips(
     selected: String,
+    unassignedCount: Int,
     onFilterChange: (String) -> Unit
 ) {
     Row(
@@ -261,7 +329,7 @@ fun FilterChips(
         FilterChip(
             selected = selected == "unassigned",
             onClick = { onFilterChange("unassigned") },
-            label = { Text("Unassigned") }
+            label = { Text("Unassigned ($unassignedCount)") }
         )
         FilterChip(
             selected = selected == "assigned",
@@ -276,6 +344,9 @@ fun FilterChips(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Transaction Card
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignableTransactionCard(
     transaction: Transaction,
@@ -283,13 +354,16 @@ fun AssignableTransactionCard(
     onToggleSelection: () -> Unit,
     onEdit: () -> Unit
 ) {
+    val isUnassigned = transaction.role == TransactionRole.UNASSIGNED
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.surface
+            containerColor = when {
+                isSelected   -> MaterialTheme.colorScheme.primaryContainer
+                isUnassigned -> MaterialTheme.colorScheme.surface
+                else         -> MaterialTheme.colorScheme.surfaceVariant
+            }
         )
     ) {
         Row(
@@ -298,8 +372,8 @@ fun AssignableTransactionCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Selection Checkbox
-            if (transaction.assigned_to == null) {
+            // Checkbox (only for unassigned)
+            if (isUnassigned) {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = { onToggleSelection() }
@@ -335,37 +409,60 @@ fun AssignableTransactionCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
 
-                // Show assignment if assigned
-                if (transaction.assigned_to != null) {
+                // Role + CSA badge
+                if (!isUnassigned) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = MaterialTheme.shapes.small
-                    ) {
-                        Text(
-                            text = "Assigned to: ${transaction.assigned_to}",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelSmall
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Role badge
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = transaction.role.displayName(),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        // CSA badge
+                        if (!transaction.assigned_to.isNullOrBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                shape = MaterialTheme.shapes.small
+                            ) {
+                                Text(
+                                    text = transaction.assigned_to,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // Amount
+            // Amount + direction + edit
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = formatAmount(transaction.amount),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-
-                // Edit button for assigned transactions
-                if (transaction.assigned_to != null) {
-                    IconButton(onClick = onEdit) {
+                Text(
+                    text = transaction.role.directionLabel(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = transaction.role.directionColor(
+                        primary = MaterialTheme.colorScheme.primary,
+                        error = MaterialTheme.colorScheme.error,
+                        outline = MaterialTheme.colorScheme.outline
+                    )
+                )
+                if (!isUnassigned) {
+                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Default.Edit,
                             contentDescription = "Edit",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -374,66 +471,99 @@ fun AssignableTransactionCard(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Batch Assignment Dialog — pick role first, then CSA if needed
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignmentDialog(
-    persons: List<com.githow.links.data.entity.Person>,
-    selectedPerson: String?,
-    onPersonSelected: (String) -> Unit,
+    persons: List<Person>,
+    transactionCount: Int,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: (role: TransactionRole, personName: String?) -> Unit
 ) {
+    var selectedRole by remember { mutableStateOf<TransactionRole?>(null) }
+    var selectedPerson by remember { mutableStateOf<String?>(null) }
+
+    val canConfirm = selectedRole != null &&
+            (selectedRole!!.requiresCsa() == false || !selectedPerson.isNullOrBlank())
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Assign To") },
+        title = { Text("Assign $transactionCount Transaction(s)") },
         text = {
             Column {
+                // ── Step 1: Role ─────────────────────────────────────────────
                 Text(
-                    "Select a person or category:",
-                    style = MaterialTheme.typography.bodyMedium,
+                    "1. Select role:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
+                ASSIGNABLE_ROLES.forEach { role ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = selectedRole == role,
+                                onClick = {
+                                    selectedRole = role
+                                    if (!role.requiresCsa()) selectedPerson = null
+                                }
+                            )
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = selectedRole == role,
+                                onClick = {
+                                    selectedRole = role
+                                    if (!role.requiresCsa()) selectedPerson = null
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(role.displayName())
+                        }
+                        Text(
+                            text = role.directionLabel(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (role.directionLabel().startsWith("IN"))
+                                MaterialTheme.colorScheme.primary
+                            else if (role.directionLabel().startsWith("OUT"))
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.outline
+                        )
+                    }
+                }
 
-                LazyColumn {
-                    // Persons (CSAs only)
-                    items(persons.filter { it.is_active }) { person ->
+                // ── Step 2: CSA (only if role needs one) ─────────────────────
+                if (selectedRole?.requiresCsa() == true) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        "2. Assign to CSA:",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    persons.filter { it.is_active }.forEach { person ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .selectable(
                                     selected = selectedPerson == person.short_name,
-                                    onClick = { onPersonSelected(person.short_name) }
+                                    onClick = { selectedPerson = person.short_name }
                                 )
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
                                 selected = selectedPerson == person.short_name,
-                                onClick = { onPersonSelected(person.short_name) }
+                                onClick = { selectedPerson = person.short_name }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(person.short_name)
-                        }
-                    }
-
-                    // Neutral option
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = selectedPerson == "Neutral",
-                                    onClick = { onPersonSelected("Neutral") }
-                                )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedPerson == "Neutral",
-                                onClick = { onPersonSelected("Neutral") }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Neutral")
                         }
                     }
                 }
@@ -441,40 +571,49 @@ fun AssignmentDialog(
         },
         confirmButton = {
             Button(
-                onClick = onConfirm,
-                enabled = selectedPerson != null
+                onClick = { onConfirm(selectedRole!!, selectedPerson) },
+                enabled = canConfirm
             ) {
                 Text("Assign")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit Assignment Dialog — same as batch but pre-filled
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun EditAssignmentDialog(
     transaction: Transaction,
-    persons: List<com.githow.links.data.entity.Person>,
-    currentAssignment: String?,
-    onPersonSelected: (String) -> Unit,
+    persons: List<Person>,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (role: TransactionRole, personName: String?) -> Unit,
     onUnassign: () -> Unit
 ) {
+    var selectedRole by remember {
+        mutableStateOf<TransactionRole?>(
+            if (transaction.role == TransactionRole.UNASSIGNED) null else transaction.role
+        )
+    }
+    var selectedPerson by remember { mutableStateOf(transaction.assigned_to) }
+
+    val canConfirm = selectedRole != null &&
+            (selectedRole!!.requiresCsa() == false || !selectedPerson.isNullOrBlank())
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Assignment") },
         text = {
             Column {
-                // Transaction info
+                // Transaction info card
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp),
+                        .padding(bottom = 12.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
@@ -499,60 +638,80 @@ fun EditAssignmentDialog(
                     }
                 }
 
+                // Role picker
                 Text(
-                    "Currently assigned to: ${transaction.assigned_to}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    "Role:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 6.dp)
                 )
-
-                Text(
-                    "Reassign to:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                LazyColumn(modifier = Modifier.height(200.dp)) {
-                    // Persons (CSAs only)
-                    items(persons.filter { it.is_active }) { person ->
+                LazyColumn(modifier = Modifier.height(180.dp)) {
+                    items(ASSIGNABLE_ROLES) { role ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .selectable(
-                                    selected = currentAssignment == person.short_name,
-                                    onClick = { onPersonSelected(person.short_name) }
+                                    selected = selectedRole == role,
+                                    onClick = {
+                                        selectedRole = role
+                                        if (!role.requiresCsa()) selectedPerson = null
+                                    }
                                 )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            RadioButton(
-                                selected = currentAssignment == person.short_name,
-                                onClick = { onPersonSelected(person.short_name) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = selectedRole == role,
+                                    onClick = {
+                                        selectedRole = role
+                                        if (!role.requiresCsa()) selectedPerson = null
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(role.displayName(), style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Text(
+                                text = role.directionLabel(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (role.directionLabel().startsWith("IN"))
+                                    MaterialTheme.colorScheme.primary
+                                else if (role.directionLabel().startsWith("OUT"))
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.outline
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(person.short_name)
                         }
                     }
+                }
 
-                    // Neutral option
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                // CSA picker
+                if (selectedRole?.requiresCsa() == true) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        "CSA:",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                    persons.filter { it.is_active }.forEach { person ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .selectable(
-                                    selected = currentAssignment == "Neutral",
-                                    onClick = { onPersonSelected("Neutral") }
+                                    selected = selectedPerson == person.short_name,
+                                    onClick = { selectedPerson = person.short_name }
                                 )
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
-                                selected = currentAssignment == "Neutral",
-                                onClick = { onPersonSelected("Neutral") }
+                                selected = selectedPerson == person.short_name,
+                                onClick = { selectedPerson = person.short_name }
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Neutral")
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(person.short_name)
                         }
                     }
                 }
@@ -569,27 +728,25 @@ fun EditAssignmentDialog(
                     Text("Unassign")
                 }
                 Button(
-                    onClick = onConfirm,
-                    enabled = currentAssignment != null && currentAssignment != transaction.assigned_to
+                    onClick = { onConfirm(selectedRole!!, selectedPerson) },
+                    enabled = canConfirm
                 ) {
-                    Text("Reassign")
+                    Text("Save")
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared composables
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun NoActiveShiftMessage() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
                 Icons.Default.Warning,
@@ -598,30 +755,20 @@ fun NoActiveShiftMessage() {
                 tint = MaterialTheme.colorScheme.error
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "No Active Shift",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Open a shift first to assign transactions",
-                style = MaterialTheme.typography.bodyMedium
-            )
+            Text("No Active Shift", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Open a shift first to assign transactions", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
 
 @Composable
 fun EmptyTransactionsMessage(filterType: String) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             text = when (filterType) {
-                "unassigned" -> "No unassigned transactions"
-                "assigned" -> "No assigned transactions yet"
-                else -> "No transactions in this shift"
+                "unassigned" -> "✅ All transactions assigned"
+                "assigned"   -> "No assigned transactions yet"
+                else         -> "No transactions in this shift"
             },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)

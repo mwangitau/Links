@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.githow.links.data.entity.TransactionRole
 import com.githow.links.viewmodel.ShiftViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -45,6 +44,7 @@ fun CloseShiftScreen(
     var isBulkAssigning by remember { mutableStateOf(false) }
 
     val persons by viewModel.persons.observeAsState(emptyList())
+    val unparsedCount by viewModel.unparsedSmsCount.observeAsState(0)
 
     val numberFormat = NumberFormat.getNumberInstance(Locale.US).apply {
         minimumFractionDigits = 2
@@ -53,17 +53,11 @@ fun CloseShiftScreen(
 
     val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
 
-    // v6: use role-based filtering — amounts are always positive
-    val totalReceived = shiftTransactions
-        .filter { it.direction == com.githow.links.data.entity.TransactionDirection.IN }
-        .sumOf { it.amount }
-    val totalTransfers = shiftTransactions
-        .filter { it.role == TransactionRole.TILL_TRANSFER_OUT }
-        .sumOf { it.amount }
-    val totalWithdrawals = shiftTransactions
-        .filter { it.role == TransactionRole.WITHDRAWAL || it.role == TransactionRole.REVERSAL }
-        .sumOf { it.amount }
-    val unassignedCount = shiftTransactions.count { it.role == TransactionRole.UNASSIGNED }
+    // Use CORRECT field names from Transaction entity
+    val totalReceived = shiftTransactions.filter { it.transaction_type == "RECEIVED" }.sumOf { it.amount }
+    val totalTransfers = shiftTransactions.filter { it.transaction_type == "SENT" }.sumOf { it.amount }
+    val totalWithdrawals = shiftTransactions.filter { it.transaction_type == "WITHDRAW" }.sumOf { it.amount }
+    val unassignedCount = shiftTransactions.count { it.assigned_to.isNullOrBlank() }
 
     Scaffold(
         topBar = {
@@ -224,8 +218,8 @@ fun CloseShiftScreen(
                                             )
                                             Spacer(Modifier.height(4.dp))
                                             LinearProgressIndicator(
-                                                progress = if (bulkAssignTotal > 0)
-                                                    bulkAssignProgress.toFloat() / bulkAssignTotal else 0f,
+                                                progress = { if (bulkAssignTotal > 0)
+                                                    bulkAssignProgress.toFloat() / bulkAssignTotal else 0f },
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         }
@@ -241,6 +235,33 @@ fun CloseShiftScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // ── Unparsed SMS warning ─────────────────────────────────
+                if (unparsedCount > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "⚠️ $unparsedCount unparsed SMS",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Some SMS failed to parse and may not be in this shift. " +
+                                        "Review them in the Unparsed SMS screen before closing.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
                         }
                     }
                 }
@@ -282,7 +303,7 @@ fun CloseShiftScreen(
 
                 // Check if shift is FROZEN
                 val isFrozen = currentShift?.status == "FROZEN"
-                val canClose = isFrozen && unassignedCount == 0 && closingBalanceText.isNotBlank()
+                val canClose = isFrozen && unassignedCount == 0 && unparsedCount == 0 && closingBalanceText.isNotBlank()
 
                 if (!isFrozen) {
                     Card(
@@ -323,6 +344,9 @@ fun CloseShiftScreen(
                         } else if (unassignedCount > 0) {
                             errorMessage = "Cannot close shift with $unassignedCount unassigned transactions. Please assign them first."
                             showErrorDialog = true
+                        } else if (unparsedCount > 0) {
+                            errorMessage = "Cannot close shift — $unparsedCount SMS still unparsed. Review them in the Unparsed SMS screen first."
+                            showErrorDialog = true
                         } else if (shift != null) {
                             isProcessing = true
                             viewModel.closeShift(
@@ -351,6 +375,7 @@ fun CloseShiftScreen(
                         if (isProcessing) "Closing Shift..."
                         else if (!isFrozen) "Freeze Shift First"
                         else if (unassignedCount > 0) "Assign All Transactions First"
+                        else if (unparsedCount > 0) "Review $unparsedCount Unparsed SMS First"
                         else "Close Shift"
                     )
                 }

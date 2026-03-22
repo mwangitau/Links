@@ -50,6 +50,17 @@ fun TransactionRole.includedInReconciliation(): Boolean = when (this) {
     else                       -> true
 }
 
+// Whether a role requires a CSA to be selected
+fun TransactionRole.requiresCsa(): Boolean = when (this) {
+    TransactionRole.CUSTOMER_RECEIPT  -> true
+    TransactionRole.TILL_TRANSFER_IN  -> true
+    TransactionRole.WITHDRAWAL        -> true
+    TransactionRole.REVERSAL          -> true
+    TransactionRole.TILL_TRANSFER_OUT -> true
+    TransactionRole.DUPLICATE         -> false
+    TransactionRole.UNASSIGNED        -> false
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser helper — derive initial role from transaction_type on SMS capture
 // Manager can override this later on the assignment screen

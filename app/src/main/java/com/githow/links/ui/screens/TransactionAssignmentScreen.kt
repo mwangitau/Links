@@ -19,6 +19,7 @@ import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Transaction
 import com.githow.links.data.entity.TransactionDirection
 import com.githow.links.data.entity.TransactionRole
+import com.githow.links.data.entity.requiresCsa
 import com.githow.links.viewmodel.ShiftViewModel
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,27 +57,6 @@ private fun TransactionRole.directionColor(
     TransactionRole.TILL_TRANSFER_OUT -> error
     else                               -> outline
 }
-
-// Roles that require a CSA to be selected
-private fun TransactionRole.requiresCsa(): Boolean = when (this) {
-    TransactionRole.CUSTOMER_RECEIPT  -> true
-    TransactionRole.TILL_TRANSFER_IN  -> true
-    TransactionRole.WITHDRAWAL        -> true
-    TransactionRole.REVERSAL          -> true
-    TransactionRole.TILL_TRANSFER_OUT -> true
-    TransactionRole.DUPLICATE         -> false
-    TransactionRole.UNASSIGNED        -> false
-}
-
-// Assignable roles — UNASSIGNED is not a valid target
-private val ASSIGNABLE_ROLES = listOf(
-    TransactionRole.CUSTOMER_RECEIPT,
-    TransactionRole.TILL_TRANSFER_IN,
-    TransactionRole.WITHDRAWAL,
-    TransactionRole.REVERSAL,
-    TransactionRole.TILL_TRANSFER_OUT,
-    TransactionRole.DUPLICATE
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,9 +116,15 @@ fun TransactionAssignmentScreen(
 
             // Summary Card
             AssignmentSummaryCard(
-                totalUnassigned = unassignedTransactions.size,
-                totalAssigned = assignedTransactions.size,
-                unassignedAmount = unassignedTransactions.sumOf { it.amount }
+                totalUnassigned = unassignedTransactions.size +
+                        assignedTransactions.count { it.role.requiresCsa() && it.assigned_to.isNullOrBlank() },
+                totalAssigned = assignedTransactions.count {
+                    !it.assigned_to.isNullOrBlank() || !it.role.requiresCsa()
+                },
+                unassignedAmount = unassignedTransactions.sumOf { it.amount } +
+                        assignedTransactions.filter {
+                            it.role.requiresCsa() && it.assigned_to.isNullOrBlank()
+                        }.sumOf { it.amount }
             )
 
             // Filter Chips
@@ -167,12 +153,15 @@ fun TransactionAssignmentScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(displayTransactions, key = { it.id }) { transaction ->
+                        val isUnassigned = transaction.role == TransactionRole.UNASSIGNED
+                        val missingCsa = transaction.role.requiresCsa() && transaction.assigned_to.isNullOrBlank()
+                        val needsAttention = isUnassigned || missingCsa
+
                         AssignableTransactionCard(
                             transaction = transaction,
                             isSelected = selectedTransactions.contains(transaction.id),
                             onToggleSelection = {
-                                // Only unassigned transactions can be batch-selected
-                                if (transaction.role == TransactionRole.UNASSIGNED) {
+                                if (needsAttention) {
                                     selectedTransactions = if (selectedTransactions.contains(transaction.id)) {
                                         selectedTransactions - transaction.id
                                     } else {
@@ -355,14 +344,16 @@ fun AssignableTransactionCard(
     onEdit: () -> Unit
 ) {
     val isUnassigned = transaction.role == TransactionRole.UNASSIGNED
+    val missingCsa = transaction.role.requiresCsa() && transaction.assigned_to.isNullOrBlank()
+    val needsAttention = isUnassigned || missingCsa
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = when {
-                isSelected   -> MaterialTheme.colorScheme.primaryContainer
-                isUnassigned -> MaterialTheme.colorScheme.surface
-                else         -> MaterialTheme.colorScheme.surfaceVariant
+                isSelected      -> MaterialTheme.colorScheme.primaryContainer
+                needsAttention  -> MaterialTheme.colorScheme.surface
+                else            -> MaterialTheme.colorScheme.surfaceVariant
             }
         )
     ) {
@@ -372,8 +363,8 @@ fun AssignableTransactionCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Checkbox (only for unassigned)
-            if (isUnassigned) {
+            // Checkbox (for unassigned or missing CSA)
+            if (needsAttention) {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = { onToggleSelection() }
@@ -472,7 +463,25 @@ fun AssignableTransactionCard(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Batch Assignment Dialog — pick role first, then CSA if needed
+// Flat assignment option — either a CSA name or a special role
+// ─────────────────────────────────────────────────────────────────────────────
+private sealed class AssignOption {
+    data class Csa(val name: String) : AssignOption()
+    data class Role(val role: TransactionRole) : AssignOption()
+}
+
+private fun AssignOption.label(): String = when (this) {
+    is AssignOption.Csa  -> name
+    is AssignOption.Role -> role.displayName()
+}
+
+private fun AssignOption.sublabel(): String = when (this) {
+    is AssignOption.Csa  -> "IN +"
+    is AssignOption.Role -> role.directionLabel()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Batch Assignment Dialog — flat list: CSAs first, then special roles
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignmentDialog(
@@ -481,98 +490,89 @@ fun AssignmentDialog(
     onDismiss: () -> Unit,
     onConfirm: (role: TransactionRole, personName: String?) -> Unit
 ) {
-    var selectedRole by remember { mutableStateOf<TransactionRole?>(null) }
-    var selectedPerson by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf<AssignOption?>(null) }
 
-    val canConfirm = selectedRole != null &&
-            (selectedRole!!.requiresCsa() == false || !selectedPerson.isNullOrBlank())
+    // Build flat list: active CSAs first, then special roles
+    val options: List<AssignOption> = persons
+        .filter { it.is_active }
+        .map { AssignOption.Csa(it.short_name) } +
+            listOf(
+                AssignOption.Role(TransactionRole.TILL_TRANSFER_OUT),
+                AssignOption.Role(TransactionRole.TILL_TRANSFER_IN),
+                AssignOption.Role(TransactionRole.WITHDRAWAL),
+                AssignOption.Role(TransactionRole.REVERSAL),
+                AssignOption.Role(TransactionRole.DUPLICATE)
+            )
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Assign $transactionCount Transaction(s)") },
         text = {
-            Column {
-                // ── Step 1: Role ─────────────────────────────────────────────
-                Text(
-                    "1. Select role:",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                ASSIGNABLE_ROLES.forEach { role ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = selectedRole == role,
-                                onClick = {
-                                    selectedRole = role
-                                    if (!role.requiresCsa()) selectedPerson = null
-                                }
-                            )
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = selectedRole == role,
-                                onClick = {
-                                    selectedRole = role
-                                    if (!role.requiresCsa()) selectedPerson = null
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(role.displayName())
-                        }
-                        Text(
-                            text = role.directionLabel(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (role.directionLabel().startsWith("IN"))
-                                MaterialTheme.colorScheme.primary
-                            else if (role.directionLabel().startsWith("OUT"))
-                                MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.outline
-                        )
-                    }
+            LazyColumn {
+                // CSA section header
+                item {
+                    Text(
+                        "CSA",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
                 }
-
-                // ── Step 2: CSA (only if role needs one) ─────────────────────
-                if (selectedRole?.requiresCsa() == true) {
+                items(persons.filter { it.is_active }) { person ->
+                    val opt = AssignOption.Csa(person.short_name)
+                    FlatOptionRow(
+                        label = person.short_name,
+                        sublabel = "IN +",
+                        sublabelColor = MaterialTheme.colorScheme.primary,
+                        selected = selected == opt,
+                        onClick = { selected = opt }
+                    )
+                }
+                // Special roles section header
+                item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Text(
-                        "2. Assign to CSA:",
-                        style = MaterialTheme.typography.labelLarge,
+                        "Other",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.secondary,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        modifier = Modifier.padding(vertical = 4.dp)
                     )
-                    persons.filter { it.is_active }.forEach { person ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = selectedPerson == person.short_name,
-                                    onClick = { selectedPerson = person.short_name }
-                                )
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedPerson == person.short_name,
-                                onClick = { selectedPerson = person.short_name }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(person.short_name)
-                        }
-                    }
+                }
+                items(listOf(
+                    TransactionRole.TILL_TRANSFER_OUT,
+                    TransactionRole.TILL_TRANSFER_IN,
+                    TransactionRole.WITHDRAWAL,
+                    TransactionRole.REVERSAL,
+                    TransactionRole.DUPLICATE
+                )) { role ->
+                    val opt = AssignOption.Role(role)
+                    FlatOptionRow(
+                        label = role.displayName(),
+                        sublabel = role.directionLabel(),
+                        sublabelColor = if (role.directionLabel().startsWith("IN"))
+                            MaterialTheme.colorScheme.primary
+                        else if (role.directionLabel().startsWith("OUT"))
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.outline,
+                        selected = selected == opt,
+                        onClick = { selected = opt }
+                    )
                 }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(selectedRole!!, selectedPerson) },
-                enabled = canConfirm
+                onClick = {
+                    when (val s = selected) {
+                        is AssignOption.Csa  -> onConfirm(TransactionRole.CUSTOMER_RECEIPT, s.name)
+                        is AssignOption.Role -> onConfirm(s.role, null)
+                        null -> {}
+                    }
+                },
+                enabled = selected != null
             ) {
                 Text("Assign")
             }
@@ -584,7 +584,7 @@ fun AssignmentDialog(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Edit Assignment Dialog — same as batch but pre-filled
+// Edit Assignment Dialog — same flat list, no pre-fill
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun EditAssignmentDialog(
@@ -594,15 +594,7 @@ fun EditAssignmentDialog(
     onConfirm: (role: TransactionRole, personName: String?) -> Unit,
     onUnassign: () -> Unit
 ) {
-    var selectedRole by remember {
-        mutableStateOf<TransactionRole?>(
-            if (transaction.role == TransactionRole.UNASSIGNED) null else transaction.role
-        )
-    }
-    var selectedPerson by remember { mutableStateOf(transaction.assigned_to) }
-
-    val canConfirm = selectedRole != null &&
-            (selectedRole!!.requiresCsa() == false || !selectedPerson.isNullOrBlank())
+    var selected by remember { mutableStateOf<AssignOption?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -638,82 +630,54 @@ fun EditAssignmentDialog(
                     }
                 }
 
-                // Role picker
+                // CSA section
                 Text(
-                    "Role:",
-                    style = MaterialTheme.typography.labelLarge,
+                    "CSA",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 6.dp)
+                    modifier = Modifier.padding(vertical = 4.dp)
                 )
-                LazyColumn(modifier = Modifier.height(180.dp)) {
-                    items(ASSIGNABLE_ROLES) { role ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = selectedRole == role,
-                                    onClick = {
-                                        selectedRole = role
-                                        if (!role.requiresCsa()) selectedPerson = null
-                                    }
-                                )
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = selectedRole == role,
-                                    onClick = {
-                                        selectedRole = role
-                                        if (!role.requiresCsa()) selectedPerson = null
-                                    }
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(role.displayName(), style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Text(
-                                text = role.directionLabel(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (role.directionLabel().startsWith("IN"))
-                                    MaterialTheme.colorScheme.primary
-                                else if (role.directionLabel().startsWith("OUT"))
-                                    MaterialTheme.colorScheme.error
-                                else
-                                    MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
+                persons.filter { it.is_active }.forEach { person ->
+                    val opt = AssignOption.Csa(person.short_name)
+                    FlatOptionRow(
+                        label = person.short_name,
+                        sublabel = "IN +",
+                        sublabelColor = MaterialTheme.colorScheme.primary,
+                        selected = selected == opt,
+                        onClick = { selected = opt }
+                    )
                 }
 
-                // CSA picker
-                if (selectedRole?.requiresCsa() == true) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text(
-                        "CSA:",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 6.dp)
+                // Special roles section
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Other",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                listOf(
+                    TransactionRole.TILL_TRANSFER_OUT,
+                    TransactionRole.TILL_TRANSFER_IN,
+                    TransactionRole.WITHDRAWAL,
+                    TransactionRole.REVERSAL,
+                    TransactionRole.DUPLICATE
+                ).forEach { role ->
+                    val opt = AssignOption.Role(role)
+                    FlatOptionRow(
+                        label = role.displayName(),
+                        sublabel = role.directionLabel(),
+                        sublabelColor = if (role.directionLabel().startsWith("IN"))
+                            MaterialTheme.colorScheme.primary
+                        else if (role.directionLabel().startsWith("OUT"))
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.outline,
+                        selected = selected == opt,
+                        onClick = { selected = opt }
                     )
-                    persons.filter { it.is_active }.forEach { person ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = selectedPerson == person.short_name,
-                                    onClick = { selectedPerson = person.short_name }
-                                )
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedPerson == person.short_name,
-                                onClick = { selectedPerson = person.short_name }
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(person.short_name)
-                        }
-                    }
                 }
             }
         },
@@ -728,8 +692,14 @@ fun EditAssignmentDialog(
                     Text("Unassign")
                 }
                 Button(
-                    onClick = { onConfirm(selectedRole!!, selectedPerson) },
-                    enabled = canConfirm
+                    onClick = {
+                        when (val s = selected) {
+                            is AssignOption.Csa  -> onConfirm(TransactionRole.CUSTOMER_RECEIPT, s.name)
+                            is AssignOption.Role -> onConfirm(s.role, null)
+                            null -> {}
+                        }
+                    },
+                    enabled = selected != null
                 ) {
                     Text("Save")
                 }
@@ -739,6 +709,38 @@ fun EditAssignmentDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reusable flat option row
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun FlatOptionRow(
+    label: String,
+    sublabel: String,
+    sublabelColor: androidx.compose.ui.graphics.Color,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(selected = selected, onClick = onClick)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selected, onClick = onClick)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+        }
+        Text(
+            text = sublabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = sublabelColor
+        )
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

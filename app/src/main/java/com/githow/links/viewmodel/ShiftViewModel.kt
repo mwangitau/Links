@@ -11,6 +11,7 @@ import com.githow.links.data.database.LinksDatabase
 import com.githow.links.data.entity.Person
 import com.githow.links.data.entity.Shift
 import com.githow.links.data.entity.ShiftAssignment
+import com.githow.links.data.entity.TransactionRole
 import com.githow.links.data.entity.Transaction
 import com.githow.links.sync.CloudSyncManager
 import com.githow.links.sync.SyncResult
@@ -477,6 +478,20 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 onError(e.message ?: "Unknown error")
             }
         }
+    }
+
+    // Overload for TransactionRole — maps role to category string for DAO
+    fun assignTransactions(transactionIds: List<Long>, personName: String, role: TransactionRole) {
+        val category = when (role) {
+            TransactionRole.CUSTOMER_RECEIPT  -> "CSA"
+            TransactionRole.TILL_TRANSFER_IN  -> "TRANSFER_IN"
+            TransactionRole.WITHDRAWAL        -> "NEUTRAL"
+            TransactionRole.REVERSAL          -> "NEUTRAL"
+            TransactionRole.TILL_TRANSFER_OUT -> "NEUTRAL"
+            TransactionRole.DUPLICATE         -> "DUPLICATE"
+            TransactionRole.UNASSIGNED        -> "UNASSIGNED"
+        }
+        assignTransactions(transactionIds, personName, category)
     }
 
     fun assignTransactions(transactionIds: List<Long>, personName: String, category: String) {

@@ -16,17 +16,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import java.util.concurrent.TimeUnit
 
 /**
  * CloudSyncManager
@@ -36,8 +29,6 @@ import java.util.concurrent.TimeUnit
  *   1. Raw SMS    — called from SmsReceiver the moment an SMS arrives
  *   2. Assignment — called when a supervisor assigns a CSA to a transaction
  *   3. Shift close — called when a shift is closed with full financial report
- *
- * Also keeps the legacy Google Sheets webhook as secondary sync.
  */
 class CloudSyncManager(private val context: Context) {
 
@@ -46,19 +37,9 @@ class CloudSyncManager(private val context: Context) {
         // Station identity is now read from StationConfig (SharedPreferences)
         // Set via Settings screen on first install — no hardcoded values needed
         private const val APP_VERSION = "1.0"
-        private const val WEBHOOK_URL =
-            "https://script.google.com/macros/s/AKfycbyMiJudd8CGRrYm7_btLxj6rOycte6HbrGgAmLd6W8z6OLQ1WrVETiG2zWQU46XH_yM/exec"
-        private const val TIMEOUT_SECONDS = 90L
-        private const val MAX_RETRIES = 3
     }
 
     private val supabase = SupabaseClient.client
-
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
 
     private val deviceId: String
         get() = Settings.Secure.getString(
@@ -158,7 +139,6 @@ class CloudSyncManager(private val context: Context) {
     // 3. SHIFT CLOSE BACKUP
     // Called when a supervisor closes a shift.
     // Backs up: shift record, all transactions, CSA assignments, CSA totals.
-    // Also sends to Google Sheets webhook for legacy compatibility.
     // ─────────────────────────────────────────────────────────────────────────
 
     suspend fun syncShiftToCloud(
@@ -241,14 +221,6 @@ class CloudSyncManager(private val context: Context) {
             logSyncEvent("SHIFT_CLOSED", null)
             Log.d(TAG, "✅ Shift ${shift.shift_id} fully backed up to Supabase")
 
-            // ── f) Also send to Google Sheets (legacy) ────────────────────
-            try {
-                sendToWebhook(buildLegacyPayload(shift, transactions), 1)
-                Log.d(TAG, "✅ Legacy webhook sync done")
-            } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Legacy webhook failed (Supabase backup succeeded): ${e.message}")
-            }
-
             SyncResult.Success(
                 message = "Shift backed up: ${transactions.size} transactions, ${csaTotals.size} CSAs",
                 timestamp = System.currentTimeMillis()
@@ -256,34 +228,10 @@ class CloudSyncManager(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Shift sync failed: ${e.message}", e)
-            // Fall back to Google Sheets only
-            try {
-                sendToWebhook(buildLegacyPayload(shift, transactions), 1)
-            } catch (e2: Exception) {
-                Log.e(TAG, "❌ Legacy fallback also failed: ${e2.message}")
-            }
             SyncResult.Failure(
                 error = e.message ?: "Unknown error",
                 timestamp = System.currentTimeMillis()
             )
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Legacy: kept for Google Sheets compatibility
-    // ─────────────────────────────────────────────────────────────────────────
-
-    suspend fun syncAssignedTransactions(
-        shift: Shift,
-        transactions: List<Transaction>
-    ): SyncResult = withContext(Dispatchers.IO) {
-        // Back up each transaction to Supabase
-        transactions.forEach { backupAssignedTransaction(it) }
-        // Also push to webhook
-        return@withContext try {
-            sendToWebhook(buildLegacyAssignmentPayload(shift, transactions), 1)
-        } catch (e: Exception) {
-            SyncResult.Failure(error = e.message ?: "Error", timestamp = System.currentTimeMillis())
         }
     }
 
@@ -425,93 +373,6 @@ class CloudSyncManager(private val context: Context) {
         }
         return map
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Legacy Google Sheets webhook (kept for backward compatibility)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private fun buildLegacyPayload(shift: Shift, transactions: List<Transaction>): JSONObject {
-        return JSONObject().apply {
-            put("shift", JSONObject().apply {
-                put("shift_id", shift.shift_id)
-                put("start_time", shift.start_time)
-                put("end_time", shift.end_time)
-                put("open_balance", shift.open_balance)
-                put("close_balance", shift.close_balance)
-                put("status", shift.status)
-                put("total_received", shift.total_received)
-                put("total_transfers", shift.total_transfers)
-                put("total_withdrawals", shift.total_withdrawals)
-                put("expected_total", shift.expected_total)
-                put("actual_total", shift.actual_total)
-                put("difference", shift.difference)
-                put("shift_name", shift.shift_name ?: "")
-                put("closed_by", shift.closed_by ?: "")
-            })
-            put("transactions", JSONArray().apply {
-                transactions.forEach { txn ->
-                    put(JSONObject().apply {
-                        put("id", txn.id)
-                        put("mpesa_code", txn.mpesa_code)
-                        put("amount", txn.amount)
-                        put("sender_name", txn.sender_name ?: "")
-                        put("sender_phone", txn.sender_phone ?: "")
-                        put("timestamp", txn.timestamp)
-                        put("transaction_type", txn.transaction_type)
-                        put("assigned_to", txn.assigned_to ?: "")
-                        put("entry_source", txn.entry_source.name)
-                    })
-                }
-            })
-            put("metadata", JSONObject().apply {
-                put("app_version", APP_VERSION)
-                put("sync_timestamp", System.currentTimeMillis())
-                put("sync_type", "full")
-                put("device_id", deviceId)
-            })
-        }
-    }
-
-    private fun buildLegacyAssignmentPayload(
-        shift: Shift,
-        transactions: List<Transaction>
-    ): JSONObject {
-        return JSONObject().apply {
-            put("shift", JSONObject().apply {
-                put("shift_id", shift.shift_id)
-                put("status", shift.status)
-            })
-            put("transactions", JSONArray().apply {
-                transactions.forEach { txn ->
-                    put(JSONObject().apply {
-                        put("mpesa_code", txn.mpesa_code)
-                        put("amount", txn.amount)
-                        put("assigned_to", txn.assigned_to ?: "")
-                        put("entry_source", txn.entry_source.name)
-                    })
-                }
-            })
-            put("metadata", JSONObject().apply {
-                put("sync_type", "incremental")
-                put("device_id", deviceId)
-            })
-        }
-    }
-
-    private fun sendToWebhook(payload: JSONObject, attempt: Int): SyncResult {
-        val body = payload.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder().url(WEBHOOK_URL).post(body).build()
-        return try {
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                SyncResult.Success("Webhook OK", System.currentTimeMillis())
-            } else {
-                SyncResult.Failure("HTTP ${response.code}", System.currentTimeMillis())
-            }
-        } catch (e: Exception) {
-            SyncResult.Failure(e.message ?: "Network error", System.currentTimeMillis())
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -540,8 +401,7 @@ private data class CsaTotals(
 sealed class SyncResult {
     data class Success(
         val message: String,
-        val timestamp: Long,
-        val responseData: JSONObject? = null
+        val timestamp: Long
     ) : SyncResult()
 
     data class Failure(

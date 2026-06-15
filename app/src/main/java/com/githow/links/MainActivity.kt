@@ -38,10 +38,15 @@ import com.githow.links.ui.screens.PersonManagementScreen
 import com.githow.links.ui.screens.ShiftDashboardScreen
 import com.githow.links.ui.screens.ShiftReportScreen
 import com.githow.links.ui.screens.SmsScreen
+import com.githow.links.ui.screens.SupervisorSetupScreen
 import com.githow.links.ui.screens.TransactionAssignmentScreen
 import com.githow.links.ui.screens.TransactionListScreen
 import com.githow.links.ui.screens.UnparsedSmsScreen
+import com.githow.links.data.database.LinksDatabase
 import com.githow.links.viewmodel.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -143,6 +148,7 @@ class MainActivity : ComponentActivity() {
 
 enum class Screen {
     LOGIN,
+    SETUP_SUPERVISOR,
     HOME,
     TRANSACTIONS,
     MANUAL_REVIEW,
@@ -163,6 +169,9 @@ fun MainScreen() {
     var currentScreen by remember { mutableStateOf(Screen.LOGIN) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedShiftId by remember { mutableLongStateOf(0L) }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // ViewModels
     val manualReviewViewModel: ManualReviewViewModel = viewModel()
@@ -242,7 +251,18 @@ fun MainScreen() {
         Box(modifier = Modifier.padding(paddingValues)) {
             when (currentScreen) {
                 Screen.LOGIN -> PinScreen(
-                    onAuthenticated = { currentScreen = Screen.HOME }
+                    onAuthenticated = {
+                        scope.launch {
+                            val supervisorExists = withContext(Dispatchers.IO) {
+                                LinksDatabase.getDatabase(context).userDao().supervisorExists()
+                            }
+                            currentScreen = if (supervisorExists) Screen.HOME else Screen.SETUP_SUPERVISOR
+                        }
+                    }
+                )
+
+                Screen.SETUP_SUPERVISOR -> SupervisorSetupScreen(
+                    onSetupComplete = { currentScreen = Screen.HOME }
                 )
 
                 Screen.HOME -> HomeScreen(

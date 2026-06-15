@@ -148,6 +148,10 @@ class AuthenticationService(
 
     /**
      * Create new user
+     *
+     * Throws IllegalArgumentException for validation errors (bad username,
+     * weak password, duplicate username) so the caller can surface the
+     * specific reason to the person setting up the account.
      */
     suspend fun createUser(
         username: String,
@@ -155,75 +159,44 @@ class AuthenticationService(
         fullName: String,
         role: UserRole,
         createdBy: String? = null
-    ): User? {
-        try {
-            // Validate username
-            if (username.length < 3 || username.length > 20) {
-                throw IllegalArgumentException("Username must be 3-20 characters")
-            }
-
-            if (!username.matches(Regex("^[a-zA-Z0-9_]+$"))) {
-                throw IllegalArgumentException("Username can only contain letters, numbers, and underscore")
-            }
-
-            // Check if username exists
-            if (userDao.usernameExists(username)) {
-                throw IllegalArgumentException("Username already exists")
-            }
-
-            // Validate password
-            if (password.length < 6) {
-                throw IllegalArgumentException("Password must be at least 6 characters")
-            }
-
-            // Generate salt and hash password
-            val salt = generateSalt()
-            val passwordHash = hashPassword(password, salt)
-
-            // Create user
-            val user = User(
-                username = username,
-                password_hash = passwordHash,
-                salt = salt,
-                role = role,
-                full_name = fullName,
-                created_by = createdBy
-            )
-
-            userDao.insert(user)
-            Log.d(TAG, "User created: $username ($role)")
-
-            return user
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating user: ${e.message}", e)
-            return null
+    ): User {
+        // Validate username
+        if (username.length < 3 || username.length > 20) {
+            throw IllegalArgumentException("Username must be 3-20 characters")
         }
-    }
 
-    /**
-     * Create default supervisor account
-     * Called on first app launch
-     */
-    suspend fun createDefaultSupervisor(password: String = "admin123"): User? {
-        try {
-            // Check if supervisor already exists
-            if (userDao.supervisorExists()) {
-                Log.d(TAG, "Supervisor already exists")
-                return userDao.getSupervisor()
-            }
-
-            return createUser(
-                username = "supervisor",
-                password = password,
-                fullName = "Supervisor",
-                role = UserRole.SUPERVISOR
-            )
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating default supervisor: ${e.message}", e)
-            return null
+        if (!username.matches(Regex("^[a-zA-Z0-9_]+$"))) {
+            throw IllegalArgumentException("Username can only contain letters, numbers, and underscore")
         }
+
+        // Check if username exists
+        if (userDao.usernameExists(username)) {
+            throw IllegalArgumentException("Username already exists")
+        }
+
+        // Validate password
+        if (password.length < 6) {
+            throw IllegalArgumentException("Password must be at least 6 characters")
+        }
+
+        // Generate salt and hash password
+        val salt = generateSalt()
+        val passwordHash = hashPassword(password, salt)
+
+        // Create user
+        val user = User(
+            username = username,
+            password_hash = passwordHash,
+            salt = salt,
+            role = role,
+            full_name = fullName,
+            created_by = createdBy
+        )
+
+        userDao.insert(user)
+        Log.d(TAG, "User created: $username ($role)")
+
+        return user
     }
 
     /**

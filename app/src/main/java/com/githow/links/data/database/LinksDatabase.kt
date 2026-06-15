@@ -5,12 +5,8 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-import androidx.sqlite.db.SupportSQLiteDatabase
 import com.githow.links.data.dao.*
 import com.githow.links.data.entity.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /**
  * LinksDatabase - Main database for LINKS app
@@ -67,7 +63,6 @@ abstract class LinksDatabase : RoomDatabase() {
                     LinksDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addCallback(DatabaseCallback(context))
                     .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
 
@@ -86,47 +81,6 @@ abstract class LinksDatabase : RoomDatabase() {
             )
                 .allowMainThreadQueries()
                 .build()
-        }
-    }
-
-    /**
-     * Database callback for initialization
-     */
-    private class DatabaseCallback(
-        private val context: Context
-    ) : RoomDatabase.Callback() {
-
-        override fun onCreate(db: SupportSQLiteDatabase) {
-            super.onCreate(db)
-
-            // On first creation, seed the database
-            INSTANCE?.let { database ->
-                CoroutineScope(Dispatchers.IO).launch {
-                    seedDatabase(database, context)
-                }
-            }
-        }
-
-        /**
-         * Seed database with initial data
-         */
-        private suspend fun seedDatabase(database: LinksDatabase, context: Context) {
-            try {
-                // Create default supervisor account
-                // Password: "admin123" (user should change on first login)
-                val authService = com.githow.links.service.AuthenticationService(
-                    database.userDao(),
-                    context
-                )
-
-                // This will only create if doesn't exist
-                authService.createDefaultSupervisor("admin123")
-
-                android.util.Log.d("LinksDatabase", "✅ Default supervisor created")
-
-            } catch (e: Exception) {
-                android.util.Log.e("LinksDatabase", "❌ Error seeding database: ${e.message}", e)
-            }
         }
     }
 }

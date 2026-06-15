@@ -4,7 +4,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
@@ -14,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.githow.links.data.entity.ParseStatus
 import com.githow.links.data.entity.RawSms
+import com.githow.links.ui.components.ParseStatusBadge
 import com.githow.links.viewmodel.SmsViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -165,7 +167,7 @@ fun SmsCard(sms: RawSms) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Parse Status Badge
-                ParseStatusBadge(status = sms.parse_status)
+                ParseStatusBadge(parseStatus = sms.parse_status)
 
                 // Timestamp
                 Text(
@@ -277,54 +279,6 @@ fun SmsCard(sms: RawSms) {
             }
         }
     }
-}
-
-@Composable
-fun ParseStatusBadge(status: ParseStatus) {
-    val (color, text, icon) = when (status) {
-        ParseStatus.UNPROCESSED -> Triple(
-            MaterialTheme.colorScheme.secondary,
-            "Pending",
-            Icons.Default.Schedule
-        )
-        ParseStatus.PARSED_SUCCESS -> Triple(
-            MaterialTheme.colorScheme.primary,
-            "Success",
-            Icons.Default.CheckCircle
-        )
-        ParseStatus.PARSE_ERROR -> Triple(
-            MaterialTheme.colorScheme.error,
-            "Failed",
-            Icons.Default.Error
-        )
-        ParseStatus.MANUAL_REVIEW -> Triple(
-            MaterialTheme.colorScheme.tertiary,
-            "Review",
-            Icons.Default.RateReview
-        )
-        ParseStatus.MANUALLY_ENTERED -> Triple(
-            MaterialTheme.colorScheme.tertiary,
-            "Manual",
-            Icons.Default.Edit
-        )
-    }
-
-    AssistChip(
-        onClick = { },
-        label = { Text(text) },
-        leadingIcon = {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-        },
-        colors = AssistChipDefaults.assistChipColors(
-            containerColor = color.copy(alpha = 0.1f),
-            labelColor = color,
-            leadingIconContentColor = color
-        )
-    )
 }
 
 @Composable

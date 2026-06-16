@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.githow.links.data.entity.TransactionRole
 import com.githow.links.viewmodel.ShiftViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -39,7 +40,6 @@ fun ShiftDashboardScreen(
 
     val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
 
-    // Calculate summary stats
     val totalReceived = currentTransactions
         .filter { it.transaction_type == "RECEIVED" }
         .sumOf { it.amount }
@@ -52,9 +52,11 @@ fun ShiftDashboardScreen(
         .filter { it.transaction_type == "WITHDRAW" }
         .sumOf { it.amount }
 
-    val unassignedCount = currentTransactions.count { it.assigned_to.isNullOrBlank() }
+    // FIX: use role instead of assigned_to so OUT transactions count as assigned
+    val unassignedCount = currentTransactions.count { it.role == TransactionRole.UNASSIGNED }
+
     val assignedTotal = currentTransactions
-        .filter { !it.assigned_to.isNullOrBlank() }
+        .filter { it.role != TransactionRole.UNASSIGNED }
         .sumOf { it.amount }
 
     Scaffold(
@@ -85,7 +87,6 @@ fun ShiftDashboardScreen(
                 .padding(16.dp)
         ) {
             if (currentShift == null) {
-                // No active shift
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -126,7 +127,6 @@ fun ShiftDashboardScreen(
                     }
                 }
             } else {
-                // Active shift exists
                 val shiftStatusColor = when (currentShift?.status) {
                     "FROZEN" -> MaterialTheme.colorScheme.tertiaryContainer
                     else -> MaterialTheme.colorScheme.primaryContainer
@@ -134,9 +134,7 @@ fun ShiftDashboardScreen(
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = shiftStatusColor
-                    )
+                    colors = CardDefaults.cardColors(containerColor = shiftStatusColor)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
@@ -199,7 +197,6 @@ fun ShiftDashboardScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Transaction Summary
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -258,7 +255,6 @@ fun ShiftDashboardScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Action Buttons
                 Button(
                     onClick = onNavigateToAssignTransactions,
                     modifier = Modifier.fillMaxWidth(),
@@ -296,17 +292,12 @@ fun ShiftDashboardScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // FREEZE SHIFT BUTTON (Step 1)
                 if (currentShift?.status == "ACTIVE") {
                     Button(
                         onClick = {
                             viewModel.freezeShift(
-                                onSuccess = {
-                                    // Shift is now FROZEN - user can assign remaining transactions
-                                },
-                                onError = { error ->
-                                    // Handle error (show toast/snackbar)
-                                }
+                                onSuccess = {},
+                                onError = {}
                             )
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -324,7 +315,6 @@ fun ShiftDashboardScreen(
                     )
                 }
 
-                // CLOSE SHIFT BUTTON (Step 2) - Only available if FROZEN
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onNavigateToCloseShift,

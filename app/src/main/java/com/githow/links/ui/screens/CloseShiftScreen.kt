@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.githow.links.data.entity.TransactionRole
 import com.githow.links.viewmodel.ShiftViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -36,7 +37,6 @@ fun CloseShiftScreen(
     var errorMessage by remember { mutableStateOf("") }
     var showEditDialog by remember { mutableStateOf(false) }
 
-    // Bulk assign state
     var showBulkAssignDialog by remember { mutableStateOf(false) }
     var selectedCsaForBulk by remember { mutableStateOf("") }
     var bulkAssignProgress by remember { mutableStateOf(0) }
@@ -53,11 +53,12 @@ fun CloseShiftScreen(
 
     val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
 
-    // Use CORRECT field names from Transaction entity
     val totalReceived = shiftTransactions.filter { it.transaction_type == "RECEIVED" }.sumOf { it.amount }
     val totalTransfers = shiftTransactions.filter { it.transaction_type == "SENT" }.sumOf { it.amount }
     val totalWithdrawals = shiftTransactions.filter { it.transaction_type == "WITHDRAW" }.sumOf { it.amount }
-    val unassignedCount = shiftTransactions.count { it.assigned_to.isNullOrBlank() }
+
+    // FIX: use role instead of assigned_to so OUT transactions count as assigned
+    val unassignedCount = shiftTransactions.count { it.role == TransactionRole.UNASSIGNED }
 
     Scaffold(
         topBar = {
@@ -113,6 +114,7 @@ fun CloseShiftScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
+                // Shift Info
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -146,6 +148,7 @@ fun CloseShiftScreen(
 
                 Spacer(Modifier.height(16.dp))
 
+                // Transaction Summary
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -187,6 +190,7 @@ fun CloseShiftScreen(
                             Text("${shiftTransactions.size}", fontWeight = FontWeight.Bold)
                         }
 
+                        // Unassigned warning — only shows when role == UNASSIGNED
                         if (unassignedCount > 0) {
                             Spacer(Modifier.height(8.dp))
                             Card(
@@ -204,7 +208,7 @@ fun CloseShiftScreen(
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Text(
-                                        "You cannot close the shift until all transactions are assigned. Use bulk assign to assign all at once.",
+                                        "Assign a role to every transaction before closing. Use bulk assign to clear them all at once.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onErrorContainer
                                     )
@@ -218,8 +222,11 @@ fun CloseShiftScreen(
                                             )
                                             Spacer(Modifier.height(4.dp))
                                             LinearProgressIndicator(
-                                                progress = { if (bulkAssignTotal > 0)
-                                                    bulkAssignProgress.toFloat() / bulkAssignTotal else 0f },
+                                                progress = {
+                                                    if (bulkAssignTotal > 0)
+                                                        bulkAssignProgress.toFloat() / bulkAssignTotal
+                                                    else 0f
+                                                },
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         }
@@ -239,7 +246,7 @@ fun CloseShiftScreen(
                     }
                 }
 
-                // ── Unparsed SMS warning ─────────────────────────────────
+                // Unparsed SMS warning
                 if (unparsedCount > 0) {
                     Spacer(Modifier.height(8.dp))
                     Card(
@@ -268,6 +275,7 @@ fun CloseShiftScreen(
 
                 Spacer(Modifier.height(16.dp))
 
+                // Closing Balance Input
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -301,7 +309,6 @@ fun CloseShiftScreen(
 
                 Spacer(Modifier.height(24.dp))
 
-                // Check if shift is FROZEN
                 val isFrozen = currentShift?.status == "FROZEN"
                 val canClose = isFrozen && unassignedCount == 0 && unparsedCount == 0 && closingBalanceText.isNotBlank()
 
@@ -321,7 +328,8 @@ fun CloseShiftScreen(
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "You must FREEZE the shift first (from Shift Dashboard) before you can close it. This prevents new transactions from being added while you're closing.",
+                                "You must FREEZE the shift first (from Shift Dashboard) before you can close it. " +
+                                        "This prevents new transactions from being added while you're closing.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -335,36 +343,44 @@ fun CloseShiftScreen(
                         val shift = currentShift
                         val closingBalance = closingBalanceText.toDoubleOrNull()
 
-                        if (closingBalance == null) {
-                            errorMessage = "Please enter a valid closing balance"
-                            showErrorDialog = true
-                        } else if (!isFrozen) {
-                            errorMessage = "Shift must be FROZEN before closing. Go to Shift Dashboard and click 'Freeze Shift' first."
-                            showErrorDialog = true
-                        } else if (unassignedCount > 0) {
-                            errorMessage = "Cannot close shift with $unassignedCount unassigned transactions. Please assign them first."
-                            showErrorDialog = true
-                        } else if (unparsedCount > 0) {
-                            errorMessage = "Cannot close shift — $unparsedCount SMS still unparsed. Review them in the Unparsed SMS screen first."
-                            showErrorDialog = true
-                        } else if (shift != null) {
-                            isProcessing = true
-                            viewModel.closeShift(
-                                shiftId = shift.shift_id,
-                                closingBalance = closingBalance,
-                                onSuccess = {
-                                    isProcessing = false
-                                    showSuccessDialog = true
-                                },
-                                onError = { error ->
-                                    isProcessing = false
-                                    errorMessage = error
-                                    showErrorDialog = true
-                                }
-                            )
+                        when {
+                            closingBalance == null -> {
+                                errorMessage = "Please enter a valid closing balance"
+                                showErrorDialog = true
+                            }
+                            !isFrozen -> {
+                                errorMessage = "Shift must be FROZEN before closing. Go to Shift Dashboard and click 'Freeze Shift' first."
+                                showErrorDialog = true
+                            }
+                            unassignedCount > 0 -> {
+                                errorMessage = "Cannot close shift with $unassignedCount unassigned transactions. Please assign a role to each one first."
+                                showErrorDialog = true
+                            }
+                            unparsedCount > 0 -> {
+                                errorMessage = "Cannot close shift — $unparsedCount SMS still unparsed. Review them in the Unparsed SMS screen first."
+                                showErrorDialog = true
+                            }
+                            shift != null -> {
+                                isProcessing = true
+                                viewModel.closeShift(
+                                    shiftId = shift.shift_id,
+                                    closingBalance = closingBalance,
+                                    onSuccess = {
+                                        isProcessing = false
+                                        showSuccessDialog = true
+                                    },
+                                    onError = { error ->
+                                        isProcessing = false
+                                        errorMessage = error
+                                        showErrorDialog = true
+                                    }
+                                )
+                            }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
                     enabled = canClose && !isProcessing
                 ) {
                     if (isProcessing) {
@@ -372,11 +388,13 @@ fun CloseShiftScreen(
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(
-                        if (isProcessing) "Closing Shift..."
-                        else if (!isFrozen) "Freeze Shift First"
-                        else if (unassignedCount > 0) "Assign All Transactions First"
-                        else if (unparsedCount > 0) "Review $unparsedCount Unparsed SMS First"
-                        else "Close Shift"
+                        when {
+                            isProcessing       -> "Closing Shift..."
+                            !isFrozen          -> "Freeze Shift First"
+                            unassignedCount > 0 -> "Assign All Transactions First"
+                            unparsedCount > 0  -> "Review $unparsedCount Unparsed SMS First"
+                            else               -> "Close Shift"
+                        }
                     )
                 }
 
@@ -385,7 +403,7 @@ fun CloseShiftScreen(
                     Text("Cancel")
                 }
 
-                // ── Bulk Assign Dialog ────────────────────────────────────
+                // Bulk Assign Dialog
                 if (showBulkAssignDialog) {
                     AlertDialog(
                         onDismissRequest = { showBulkAssignDialog = false },
@@ -393,7 +411,7 @@ fun CloseShiftScreen(
                         text = {
                             Column {
                                 Text(
-                                    "Assign all $unassignedCount unassigned transactions to one CSA.",
+                                    "Assign all $unassignedCount unassigned transactions to one CSA as Customer Receipt.",
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Spacer(Modifier.height(12.dp))
@@ -465,6 +483,7 @@ fun CloseShiftScreen(
                     )
                 }
 
+                // Edit Closing Balance (for already closed shifts)
                 if (currentShift?.status == "CLOSED" && currentShift?.close_balance != null) {
                     Spacer(Modifier.height(16.dp))
                     Card(
@@ -496,6 +515,7 @@ fun CloseShiftScreen(
         }
     }
 
+    // Success Dialog
     if (showSuccessDialog) {
         AlertDialog(
             onDismissRequest = { },
@@ -509,6 +529,7 @@ fun CloseShiftScreen(
         )
     }
 
+    // Error Dialog
     if (showErrorDialog) {
         AlertDialog(
             onDismissRequest = { showErrorDialog = false },
@@ -520,6 +541,7 @@ fun CloseShiftScreen(
         )
     }
 
+    // Edit Closing Balance Dialog
     if (showEditDialog) {
         var editBalanceText by remember { mutableStateOf(currentShift?.close_balance?.toString() ?: "") }
 

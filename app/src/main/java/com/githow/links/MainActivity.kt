@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -45,6 +46,7 @@ import com.githow.links.ui.screens.UnparsedSmsScreen
 import com.githow.links.data.database.LinksDatabase
 import com.githow.links.viewmodel.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -68,15 +70,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkPermissions()
-
-        // Start the foreground service — keeps the process alive for SMS capture
         SmsForegroundService.start(this)
-        // Schedule background sync — runs every 15 min when network available
         SupabaseSyncWorker.schedulePeriodicSync(this)
-
-        // Ask the user to exempt LINKS from battery optimisation
-        // Without this, aggressive ROMs (Tecno, Infinix, Samsung) will still
-        // kill the service after the screen is off for a while
         requestBatteryOptimisationExemption()
 
         setContent {
@@ -91,11 +86,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Ask the OS to whitelist LINKS from battery optimisation.
-     * This opens the system settings page — user taps "Allow" once and it persists.
-     * Only shown if not already exempted.
-     */
     private fun requestBatteryOptimisationExemption() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = getSystemService(POWER_SERVICE) as PowerManager
@@ -108,7 +98,6 @@ class MainActivity : ComponentActivity() {
                     }
                     startActivity(intent)
                 } catch (e: Exception) {
-                    // Some ROMs don't support this intent — fall back to general page
                     try {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     } catch (e2: Exception) {
@@ -121,7 +110,6 @@ class MainActivity : ComponentActivity() {
 
     private fun checkPermissions() {
         val permissions = mutableListOf<String>()
-
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS)
             != PackageManager.PERMISSION_GRANTED) {
             permissions.add(Manifest.permission.RECEIVE_SMS)
@@ -130,14 +118,12 @@ class MainActivity : ComponentActivity() {
             != PackageManager.PERMISSION_GRANTED) {
             permissions.add(Manifest.permission.READ_SMS)
         }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
                 permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-
         if (permissions.isNotEmpty()) {
             requestPermissionLauncher.launch(permissions.toTypedArray())
         } else {
@@ -173,7 +159,6 @@ fun MainScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // ViewModels
     val manualReviewViewModel: ManualReviewViewModel = viewModel()
     val transactionViewModel: TransactionViewModel = viewModel()
     val smsViewModel: SmsViewModel = viewModel()
@@ -182,36 +167,30 @@ fun MainScreen() {
 
     Scaffold(
         bottomBar = {
-            if (currentScreen in listOf(Screen.HOME, Screen.TRANSACTIONS, Screen.MANUAL_REVIEW, Screen.SMS, Screen.SETTINGS) && currentScreen != Screen.LOGIN) {
+            if (currentScreen in listOf(
+                    Screen.HOME, Screen.TRANSACTIONS, Screen.MANUAL_REVIEW,
+                    Screen.SMS, Screen.SETTINGS
+                ) && currentScreen != Screen.LOGIN
+            ) {
                 NavigationBar {
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Home, "Home") },
                         label = { Text("Home") },
                         selected = selectedTab == 0,
-                        onClick = {
-                            selectedTab = 0
-                            currentScreen = Screen.HOME
-                        }
+                        onClick = { selectedTab = 0; currentScreen = Screen.HOME }
                     )
-
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.List, "Transactions") },
                         label = { Text("Transactions") },
                         selected = selectedTab == 1,
-                        onClick = {
-                            selectedTab = 1
-                            currentScreen = Screen.TRANSACTIONS
-                        }
+                        onClick = { selectedTab = 1; currentScreen = Screen.TRANSACTIONS }
                     )
-
                     NavigationBarItem(
                         icon = {
                             val pendingCount by manualReviewViewModel.pendingCount.collectAsState()
                             BadgedBox(
                                 badge = {
-                                    if (pendingCount > 0) {
-                                        Badge { Text("$pendingCount") }
-                                    }
+                                    if (pendingCount > 0) Badge { Text("$pendingCount") }
                                 }
                             ) {
                                 Icon(Icons.Default.Warning, "Review")
@@ -219,30 +198,19 @@ fun MainScreen() {
                         },
                         label = { Text("Review") },
                         selected = selectedTab == 2,
-                        onClick = {
-                            selectedTab = 2
-                            currentScreen = Screen.MANUAL_REVIEW
-                        }
+                        onClick = { selectedTab = 2; currentScreen = Screen.MANUAL_REVIEW }
                     )
-
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Email, "SMS") },
                         label = { Text("SMS") },
                         selected = selectedTab == 3,
-                        onClick = {
-                            selectedTab = 3
-                            currentScreen = Screen.SMS
-                        }
+                        onClick = { selectedTab = 3; currentScreen = Screen.SMS }
                     )
-
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Settings, "Settings") },
                         label = { Text("Settings") },
                         selected = selectedTab == 4,
-                        onClick = {
-                            selectedTab = 4
-                            currentScreen = Screen.SETTINGS
-                        }
+                        onClick = { selectedTab = 4; currentScreen = Screen.SETTINGS }
                     )
                 }
             }
@@ -260,11 +228,9 @@ fun MainScreen() {
                         }
                     }
                 )
-
                 Screen.SETUP_SUPERVISOR -> SupervisorSetupScreen(
                     onSetupComplete = { currentScreen = Screen.HOME }
                 )
-
                 Screen.HOME -> HomeScreen(
                     onNavigateToOpenShift = { currentScreen = Screen.OPEN_SHIFT },
                     onNavigateToCloseShift = { currentScreen = Screen.CLOSE_SHIFT },
@@ -273,45 +239,32 @@ fun MainScreen() {
                     onNavigateToShiftHistory = { currentScreen = Screen.SHIFT_HISTORY },
                     onNavigateToSettings = { currentScreen = Screen.SETTINGS }
                 )
-
                 Screen.TRANSACTIONS -> TransactionListScreen(viewModel = transactionViewModel)
-
                 Screen.MANUAL_REVIEW -> ManualReviewScreen(
                     viewModel = manualReviewViewModel,
-                    onNavigateBack = {
-                        selectedTab = 0
-                        currentScreen = Screen.HOME
-                    }
+                    onNavigateBack = { selectedTab = 0; currentScreen = Screen.HOME }
                 )
-
                 Screen.SMS -> SmsScreen(
                     viewModel = smsViewModel,
                     onNavigateToUnparsed = { currentScreen = Screen.UNPARSED_SMS }
                 )
-
                 Screen.UNPARSED_SMS -> UnparsedSmsScreen(
                     viewModel = unparsedSmsViewModel,
                     onNavigateBack = { currentScreen = Screen.SMS },
                     onManualEntry = { rawSmsId ->
-                        // Item is already queued by ensureInReviewQueue() before this fires.
-                        // Navigate to Manual Review where the supervisor fills the form.
                         selectedTab = 2
                         currentScreen = Screen.MANUAL_REVIEW
                     }
                 )
-
                 Screen.SETTINGS -> SettingsScreen()
-
                 Screen.OPEN_SHIFT -> OpenShiftScreen(
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.HOME }
                 )
-
                 Screen.CLOSE_SHIFT -> CloseShiftScreen(
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.HOME }
                 )
-
                 Screen.SHIFT_DASHBOARD -> ShiftDashboardScreen(
                     viewModel = shiftViewModel,
                     onNavigateToOpenShift = { currentScreen = Screen.OPEN_SHIFT },
@@ -321,12 +274,10 @@ fun MainScreen() {
                     onNavigateToShiftSummary = { currentScreen = Screen.HOME },
                     onNavigateToHistory = { currentScreen = Screen.SHIFT_HISTORY }
                 )
-
                 Screen.ASSIGN_TRANSACTIONS -> TransactionAssignmentScreen(
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
                 )
-
                 Screen.SHIFT_HISTORY -> ClosedShiftsHistoryScreen(
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.HOME },
@@ -335,13 +286,11 @@ fun MainScreen() {
                         currentScreen = Screen.SHIFT_DETAILS
                     }
                 )
-
                 Screen.SHIFT_DETAILS -> ShiftReportScreen(
                     shiftId = selectedShiftId,
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.SHIFT_HISTORY }
                 )
-
                 Screen.MANAGE_PERSONS -> PersonManagementScreen(
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
@@ -355,8 +304,8 @@ fun MainScreen() {
 @Composable
 fun SettingsScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    // Load saved values
     var stationCode by remember { mutableStateOf(StationConfig.getStationCode(context)) }
     var stationName by remember { mutableStateOf(StationConfig.getStationName(context)) }
     var tillNumber by remember { mutableStateOf(StationConfig.getTillNumber(context)) }
@@ -364,8 +313,13 @@ fun SettingsScreen() {
 
     var showSaved by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
+    var isSyncing by remember { mutableStateOf(false) }
+    var syncMessage by remember { mutableStateOf<String?>(null) }
 
     val isConfigured = StationConfig.isConfigured(context)
+
+    // Refresh cached UUID display whenever screen recomposes
+    var cachedUuid by remember { mutableStateOf(StationConfig.getCachedUuid(context)) }
 
     Scaffold(
         topBar = {
@@ -380,11 +334,11 @@ fun SettingsScreen() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .verticalScroll(rememberScrollState())
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            // ── Station Identity ─────────────────────────────────────────────
+            // ── Station Status Card ──────────────────────────────────────────
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -400,16 +354,15 @@ fun SettingsScreen() {
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
+                    Spacer(Modifier.height(4.dp))
                     if (isConfigured) {
-                        Spacer(Modifier.height(4.dp))
                         Text(
                             StationConfig.toDisplayString(context),
                             style = MaterialTheme.typography.bodySmall
                         )
                     } else {
-                        Spacer(Modifier.height(4.dp))
                         Text(
-                            "Fill in station details below. This identifies which station's data is synced to Supabase.",
+                            "Fill in station details below before syncing.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -418,13 +371,14 @@ fun SettingsScreen() {
 
             Spacer(Modifier.height(16.dp))
 
+            // ── Station Identity Fields ──────────────────────────────────────
             Text(
                 "Station Identity",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "Each phone must have a unique station code. This is used to separate data in Supabase.",
+                "Each phone must have a unique station code matching a row in Supabase.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -434,8 +388,8 @@ fun SettingsScreen() {
                 value = stationCode,
                 onValueChange = { stationCode = it.uppercase() },
                 label = { Text("Station Code *") },
-                placeholder = { Text("e.g. MANGU, WESTLANDS, KAREN") },
-                supportingText = { Text("Short unique ID — no spaces") },
+                placeholder = { Text("e.g. MANGU, GATAKA") },
+                supportingText = { Text("Must match station_code in Supabase stations table") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -445,7 +399,7 @@ fun SettingsScreen() {
                 value = stationName,
                 onValueChange = { stationName = it },
                 label = { Text("Station Name *") },
-                placeholder = { Text("e.g. Shell Mangu Road") },
+                placeholder = { Text("e.g. TotalEnergies Gataka Road") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -455,7 +409,7 @@ fun SettingsScreen() {
                 value = tillNumber,
                 onValueChange = { tillNumber = it },
                 label = { Text("M-PESA Till Number") },
-                placeholder = { Text("e.g. 5551234") },
+                placeholder = { Text("e.g. 3424425") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -468,7 +422,7 @@ fun SettingsScreen() {
                 value = paybillNumber,
                 onValueChange = { paybillNumber = it },
                 label = { Text("M-PESA Paybill Number") },
-                placeholder = { Text("e.g. 400200") },
+                placeholder = { Text("e.g. 3424425") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -482,6 +436,7 @@ fun SettingsScreen() {
                 onClick = {
                     if (stationCode.isBlank() || stationName.isBlank()) {
                         showError = true
+                        showSaved = false
                     } else {
                         StationConfig.save(
                             context = context,
@@ -490,10 +445,15 @@ fun SettingsScreen() {
                             tillNumber = tillNumber,
                             paybillNumber = paybillNumber
                         )
+                        cachedUuid = StationConfig.getCachedUuid(context)
                         showSaved = true
+                        showError = false
+                        syncMessage = null
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(52.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
             ) {
                 Text("Save Station Config")
             }
@@ -529,32 +489,116 @@ fun SettingsScreen() {
                 }
             }
 
-            // ── Supabase info ────────────────────────────────────────────────
+            // ── Supabase Sync Section ────────────────────────────────────────
             Spacer(Modifier.height(24.dp))
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
+
             Text(
-                "Supabase Sync Info",
+                "Supabase Sync",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(8.dp))
-            val cachedUuid = StationConfig.getCachedUuid(context)
+
+            // UUID status
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (cachedUuid.isNotBlank())
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
+                        MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        if (cachedUuid.isNotBlank()) "✅ UUID Resolved" else "⚠️ UUID Not Resolved",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (cachedUuid.isNotBlank())
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (cachedUuid.isNotBlank()) cachedUuid
+                        else "Save station config then tap Sync Now — the UUID will be resolved automatically from Supabase",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
             Text(
-                if (cachedUuid.isNotBlank())
-                    "Station UUID (cached): $cachedUuid"
-                else
-                    "Station UUID: Not yet resolved — will be looked up on first sync",
+                "The station_code must match a row in the Supabase stations table. " +
+                        "Add new stations via Supabase SQL Editor before syncing.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Note: The station_code above must match a row in the Supabase stations table. " +
-                        "Add new stations in Supabase Table Editor before installing on a new phone.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── Sync Now Button ──────────────────────────────────────────────
+            Button(
+                onClick = {
+                    isSyncing = true
+                    syncMessage = null
+                    scope.launch {
+                        try {
+                            // Schedule an immediate one-time sync worker
+                            SupabaseSyncWorker.scheduleRetry(context)
+                            // Give it a moment to register
+                            delay(2000)
+                            // Refresh UUID display in case it was just resolved
+                            cachedUuid = StationConfig.getCachedUuid(context)
+                            syncMessage = "✅ Sync triggered — all unsynced records will push to Supabase shortly. Check the UUID field above — if it resolved, your station is connected."
+                        } catch (e: Exception) {
+                            syncMessage = "❌ Failed to trigger sync: ${e.message}"
+                        } finally {
+                            isSyncing = false
+                        }
+                    }
+                },
+                enabled = isConfigured && !isSyncing,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary
+                )
+            ) {
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onSecondary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (isSyncing) "Triggering Sync..." else "☁️ Sync Now")
+            }
+
+            // Sync result message
+            syncMessage?.let { message ->
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (message.startsWith("✅"))
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
         }
     }
 }

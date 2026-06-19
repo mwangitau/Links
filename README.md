@@ -1,16 +1,16 @@
 # LINKS — M-PESA Transaction Manager
 
 > **L**edger & **I**ntelligent **N**etwork for **K**iryan **S**tations  
-> Built for Shell Mangu Road Service Station, Nairobi, Kenya 🇰🇪  
+> Built for Kiryan Energy Ltd petrol stations, Kenya 🇰🇪  
 > Operated by **Kiryan Energy Ltd**
 
 ---
 
 ## Overview
 
-LINKS is a production-grade Android app that captures, parses, and reconciles M-PESA transactions in real time for petrol stations. It replaces manual M-PESA statement reviews with an automated system that assigns transactions to CSAs, manages shifts, and syncs everything to the cloud.
+LINKS is a production-grade Android app that captures, parses, and reconciles M-PESA transactions in real time for petrol stations. It replaces manual M-PESA statement reviews with an automated system that lets managers assign every transaction a role, manages shifts, and syncs everything to a shared cloud backend across multiple stations.
 
-**The problem it solves:** At a busy 24-hour station, CSAs receive M-PESA payments on behalf of the station. Reconciling who collected what, when, and whether it matches the closing balance — previously done manually with pen and paper — is now automated.
+**The problem it solves:** At a busy 24-hour station, CSAs receive M-PESA payments on behalf of the station, transfer money between tills, make withdrawals, and occasionally face reversals. Reconciling who collected what, what was transferred or withdrawn, and whether it all matches the closing balance — previously done manually with pen and paper — is now automated and centrally backed up, station by station.
 
 ---
 
@@ -20,13 +20,14 @@ LINKS is a production-grade Android app that captures, parses, and reconciles M-
 |--------|-------------|
 | 📩 **SMS Capture** | Intercepts M-PESA SMS in real time via foreground service |
 | 🔍 **Auto Parsing** | Extracts amount, code, sender, type from raw SMS (99.8%+ accuracy) |
-| 👷 **CSA Assignment** | Assign transactions to Customer Service Attendants per shift |
+| 🏷️ **Role-Based Assignment** | Every transaction — receipts, transfers, withdrawals, reversals — arrives unassigned and is manually reviewed and tagged with a role by the manager |
+| 👷 **CSA Assignment** | Assign customer receipts to Customer Service Attendants per shift |
 | 📊 **Shift Management** | Open, freeze, and close shifts with full reconciliation |
-| ☁️ **Supabase Sync** | Cloud backup with offline retry queue via WorkManager |
-| 🏪 **Multi-Station** | One APK serves multiple stations — each configured independently |
+| ☁️ **Supabase Sync** | Cloud backup with offline retry queue, plus a manual "Sync Now" option that runs immediately without waiting on background scheduling |
+| 🏪 **Multi-Station** | One shared Supabase backend serves multiple stations — each phone is configured independently and its data is fully isolated by `station_id` |
 | 🔁 **Manual Review** | Queue for SMS that failed to parse — review and assign manually |
 | 🔒 **PIN Lock** | 4-digit PIN screen on every launch (SHA-256 hashed) |
-| 📦 **Bulk Assign** | Assign thousands of unassigned transactions in one tap |
+| 📦 **Bulk Assign** | Assign thousands of unassigned customer receipts to a CSA in one tap |
 
 ---
 
@@ -37,7 +38,7 @@ LINKS is a production-grade Android app that captures, parses, and reconciles M-
 | Language | Kotlin |
 | UI | Jetpack Compose + Material 3 |
 | Architecture | MVVM (ViewModel + LiveData) |
-| Local DB | Room (SQLite) v5 |
+| Local DB | Room (SQLite) v6 |
 | Cloud | Supabase (PostgreSQL) |
 | Background | WorkManager (offline retry) + Foreground Service |
 | Auth | SHA-256 PIN (local) + PBKDF2 supervisor password |
@@ -49,7 +50,7 @@ LINKS is a production-grade Android app that captures, parses, and reconciles M-
 
 ```
 app/src/main/java/com/githow/links/
-├── MainActivity.kt                         # Navigation host, Screen enum
+├── MainActivity.kt                         # Navigation host, Screen enum, Settings screen
 ├── SupabaseClient.kt                       # Supabase initialisation
 │
 ├── config/
@@ -64,13 +65,14 @@ app/src/main/java/com/githow/links/
 │   │   ├── ManualReviewQueueDao.kt
 │   │   └── UserDao.kt
 │   ├── database/
-│   │   ├── LinksDatabase.kt               # Room DB v5, migration chain
+│   │   ├── LinksDatabase.kt               # Room DB v6, migration chain
 │   │   ├── DatabaseMigration.kt           # MIGRATION_2_3
 │   │   ├── Migration_3_4.kt              # MIGRATION_3_4 (supabase sync columns)
-│   │   └── Migration_4_5.kt              # MIGRATION_4_5 (schema index fixes)
+│   │   ├── Migration_4_5.kt              # MIGRATION_4_5 (schema index fixes)
+│   │   └── Migration_5_6.kt              # MIGRATION_5_6 (role-based assignment system)
 │   └── entity/
 │       ├── RawSms.kt
-│       ├── Transaction.kt
+│       ├── Transaction.kt                 # TransactionRole, TransactionDirection enums
 │       ├── Shift.kt
 │       ├── Person.kt
 │       ├── ShiftAssignment.kt
@@ -86,7 +88,7 @@ app/src/main/java/com/githow/links/
 │   └── AuthenticationService.kt          # PBKDF2 supervisor auth
 │
 ├── sync/
-│   └── CloudSyncManager.kt               # Supabase backup logic
+│   └── CloudSyncManager.kt               # Supabase backup logic, station UUID resolution
 │
 ├── worker/
 │   └── SupabaseSyncWorker.kt             # WorkManager offline retry
@@ -95,7 +97,7 @@ app/src/main/java/com/githow/links/
 │   └── MpesaParser.kt                    # M-PESA SMS parser
 │
 ├── viewmodel/
-│   ├── ShiftViewModel.kt
+│   ├── ShiftViewModel.kt                  # Role-based assignment, shift lifecycle
 │   ├── TransactionViewModel.kt
 │   ├── SmsViewModel.kt
 │   ├── ManualReviewViewModel.kt
@@ -109,9 +111,9 @@ app/src/main/java/com/githow/links/
     │   ├── UnparsedSmsScreen.kt
     │   ├── ManualReviewScreen.kt
     │   ├── TransactionListScreen.kt
-    │   ├── TransactionAssignmentScreen.kt # Refresh button added
+    │   ├── TransactionAssignmentScreen.kt # Role assignment for every transaction
     │   ├── OpenShiftScreen.kt
-    │   ├── CloseShiftScreen.kt            # Bulk assign feature
+    │   ├── CloseShiftScreen.kt            # Role-aware unassigned-count gating, bulk assign
     │   ├── ShiftDashboardScreen.kt
     │   ├── ShiftReportScreen.kt
     │   ├── ClosedShiftsHistoryScreen.kt
@@ -124,12 +126,12 @@ app/src/main/java/com/githow/links/
 
 ---
 
-## Database Schema (Room v5)
+## Database Schema (Room v6)
 
 | Table | Purpose |
 |-------|---------|
 | `raw_sms` | Every intercepted SMS, raw and parsed |
-| `transactions` | Parsed M-PESA transactions |
+| `transactions` | Parsed M-PESA transactions, each carrying a `role`, `direction`, and reconciliation flag |
 | `shifts` | Shift records (open/frozen/closed) |
 | `shift_assignments` | Which CSAs worked a shift |
 | `persons` | CSA profiles |
@@ -141,7 +143,25 @@ app/src/main/java/com/githow/links/
 v2 → v3  DatabaseMigration.kt   Added parse_status, webhook sync, manual_review_queue, users
 v3 → v4  Migration_3_4.kt       Added supabase_synced columns to transactions
 v4 → v5  Migration_4_5.kt       Fixed index mismatches (index_raw_sms_synced_to_webhook, index_transactions_supabase_synced)
+v5 → v6  Migration_5_6.kt       Added role-based transaction classification (role, direction, included_in_reconciliation, last_modified_at), frozen_at on shifts
 ```
+
+---
+
+## Transaction Roles
+
+Every transaction — whatever its parsed type — arrives in the app as **UNASSIGNED**. The manager reviews each one on the assignment screen and tags it with a role:
+
+| Role | Direction | Included in Reconciliation |
+|------|-----------|------------------------------|
+| Customer Receipt | IN | ✅ |
+| Till Transfer In | IN | ✅ |
+| Withdrawal | OUT | ✅ |
+| Reversal | OUT | ✅ |
+| Till Transfer Out | OUT | ✅ |
+| Duplicate | — | ❌ (excluded) |
+
+This keeps every inbound and outbound movement visible and intentional — nothing is auto-classified or hidden from review. A shift cannot be closed until every transaction has a role.
 
 ---
 
@@ -164,6 +184,8 @@ All upserts use `onConflict` to ensure idempotency — safe to retry.
 
 ## Multi-Station Setup
 
+LINKS uses a single shared Supabase backend for all stations. Each station's data is fully isolated by `station_id`, and each phone is configured independently via the Settings screen.
+
 ### Add a New Station (Supabase)
 ```sql
 INSERT INTO stations (station_code, station_name, till_number, paybill_number)
@@ -180,8 +202,10 @@ VALUES ('JOSKA', 'Shell Joska - Kagundo Rd', '0', '0');
 
 **Notes:**
 - Station code is auto-uppercased on save
-- UUID is resolved and cached on first sync
-- If Settings shows "UUID not yet resolved" after first sync → wrong station code
+- UUID is resolved from Supabase and cached on first successful sync
+- The Settings screen shows live UUID resolution status — "UUID Resolved" or "UUID Not Resolved" — so you can confirm a new station is correctly connected
+- A **Sync Now** button triggers an immediate sync without waiting for the periodic background worker — useful for confirming a new station's connection right away
+- If Settings shows "UUID Not Resolved" after a sync attempt, confirm the station code matches a row in the Supabase `stations` table exactly
 - Each station's data is fully isolated by `station_id` in Supabase
 
 ---
@@ -197,7 +221,7 @@ SMS arrives → saved to Room ✅
            → network returns → SupabaseSyncWorker pushes all unsynced records
 ```
 
-WorkManager runs a periodic sync every 15 minutes and a one-time retry on failure, both requiring network connectivity.
+WorkManager runs a periodic sync every 15 minutes and a one-time retry on failure, both requiring network connectivity. The Settings screen also offers a manual **Sync Now** button that runs immediately and reports exactly how many SMS and transactions were pushed.
 
 ---
 
@@ -207,24 +231,31 @@ WorkManager runs a periodic sync every 15 minutes and a one-time retry on failur
 - Stored as SHA-256 hash in `SharedPreferences`
 - Every app launch requires PIN entry
 - No back button bypass
-- Supervisor actions (shift close, manual review) use a separate PBKDF2 password via `AuthenticationService`
-
-**Default supervisor password:** `admin123` — change after first login.
+- Supervisor actions (shift close, manual review) use a separate PBKDF2 password via `AuthenticationService`, set up by each station's supervisor on first run
 
 ---
 
 ## Reconciliation Formula
 
 ```
-Expected Customer Receipts = (Closing Balance − Opening Balance) + Money Sent Out
-Variance = Expected Receipts − Actual Receipts
+Expected Float = Closing Balance − Opening Balance + Money Out
+Variance = Expected Float − Grand Total (assigned customer receipts)
 ```
 
-Internal M-PESA transfers between the station's own paybill numbers are auto-assigned as **Neutral** and excluded from the reconciliation to avoid double-counting.
+Money Out is the sum of all transactions assigned an OUT-direction role (Withdrawal, Reversal, Till Transfer Out). Duplicate transactions are excluded from reconciliation entirely to avoid double-counting till-to-till transfers.
 
 ---
 
 ## Build & Install
+
+### Configure Supabase Credentials
+Before building, create or edit `local.properties` in the project root:
+```
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-anon-public-key
+sdk.dir=<path to your Android SDK>
+```
+These values come from Supabase Dashboard → Settings → API. Do not commit this file to version control.
 
 ### Debug APK
 ```
@@ -236,7 +267,7 @@ Output: app/build/outputs/apk/debug/app-debug.apk
 1. Copy `app-debug.apk` to phone (USB / WhatsApp / Google Drive)
 2. Open file on phone → Install
 3. Allow "Install from unknown sources" if prompted
-4. Launch → set PIN → go to Settings → enter station info
+4. Launch → set PIN → create supervisor account → go to Settings → enter station info → Sync Now
 
 ---
 
@@ -260,22 +291,23 @@ POST_NOTIFICATIONS              — foreground service notification
 - No restore from Supabase — uninstalling loses local data not yet synced
 - Shift report is view-only — no PDF export yet
 - No push notifications for large transactions
+- WorkManager's background network constraint can be unreliable on some budget Android ROMs — the manual Sync Now button is the most reliable way to confirm a sync on those devices
 
 ---
 
 ## Station Deployments
 
-| Station | Code | Location | Till/Paybill |
-|---------|------|----------|--------------|
-| Shell Mangu Road | `MANGU` | Nairobi |  |
-| Shell Joska | `JOSKA` | Kagundo Rd |  |
+| Station | Code | Location |
+|---------|------|----------|
+| Shell Mangu Road | `MANGU` | Kiambu |
+| TotalEnergies Gataka Road | `GATAKA` | Kajiado |
 
 ---
 
 ## License
 
 ```
-Copyright (c) 2025 Kiryan Energy Ltd. All rights reserved.
+Copyright (c) 2026 Kiryan Energy Ltd. All rights reserved.
 
 This software and its source code are proprietary and confidential.
 Unauthorized copying, distribution, modification, or use of this software,
@@ -289,11 +321,11 @@ For licensing inquiries, contact the development team.
 
 ## Developer
 
-**Knee** — Station Manager, Kiryan Energy Ltd  
-BSc Applied Statistics with IT
-MSc of Science in Artificial Intelligence
+**(John Gitau)** — Station Manager & Data Analyst, Kiryan Energy Ltd  
+BSc Applied Statistics with IT  
+MSc Artificial Intelligence (in progress)  
 Built and maintained independently alongside station operations.
 
 ---
 
-*LINKS is built for real operational use at Kenyan petrol stations. It handles production M-PESA data daily.*
+*LINKS is built for real operational use at Kenyan petrol stations. It handles production M-PESA data daily across multiple sites.*

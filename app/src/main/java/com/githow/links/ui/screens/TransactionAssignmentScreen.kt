@@ -22,9 +22,6 @@ import com.githow.links.data.entity.TransactionRole
 import com.githow.links.data.entity.requiresCsa
 import com.githow.links.viewmodel.ShiftViewModel
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Role display helpers
-// ─────────────────────────────────────────────────────────────────────────────
 private fun TransactionRole.displayName(): String = when (this) {
     TransactionRole.CUSTOMER_RECEIPT  -> "Customer Receipt"
     TransactionRole.TILL_TRANSFER_IN  -> "Till Transfer In"
@@ -69,6 +66,9 @@ fun TransactionAssignmentScreen(
     val assignedTransactions by viewModel.assignedTransactions.observeAsState(emptyList())
     val persons by viewModel.persons.observeAsState(emptyList())
 
+    // ── Double-assignment guard ───────────────────────────────────────────────
+    val isAssigning by viewModel.isAssigning.observeAsState(false)
+
     var selectedTransactions by remember { mutableStateOf(setOf<Long>()) }
     var showAssignDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
@@ -97,9 +97,27 @@ fun TransactionAssignmentScreen(
         floatingActionButton = {
             if (selectedTransactions.isNotEmpty()) {
                 ExtendedFloatingActionButton(
-                    onClick = { showAssignDialog = true },
-                    icon = { Icon(Icons.Default.Check, contentDescription = null) },
-                    text = { Text("Assign ${selectedTransactions.size}") }
+                    onClick = {
+                        // Guard — do not open dialog if assignment is in progress
+                        if (!isAssigning) showAssignDialog = true
+                    },
+                    icon = {
+                        if (isAssigning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        } else {
+                            Icon(Icons.Default.Check, contentDescription = null)
+                        }
+                    },
+                    text = {
+                        Text(
+                            if (isAssigning) "Assigning..."
+                            else "Assign ${selectedTransactions.size}"
+                        )
+                    }
                 )
             }
         }
@@ -114,10 +132,41 @@ fun TransactionAssignmentScreen(
                 return@Column
             }
 
-            // Summary Card
+            // Assignment in progress banner
+            if (isAssigning) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            "Saving assignment — please wait...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
             AssignmentSummaryCard(
                 totalUnassigned = unassignedTransactions.size +
-                        assignedTransactions.count { it.role.requiresCsa() && it.assigned_to.isNullOrBlank() },
+                        assignedTransactions.count {
+                            it.role.requiresCsa() && it.assigned_to.isNullOrBlank()
+                        },
                 totalAssigned = assignedTransactions.count {
                     !it.assigned_to.isNullOrBlank() || !it.role.requiresCsa()
                 },
@@ -127,7 +176,6 @@ fun TransactionAssignmentScreen(
                         }.sumOf { it.amount }
             )
 
-            // Filter Chips
             FilterChips(
                 selected = filterType,
                 unassignedCount = unassignedTransactions.size,
@@ -137,7 +185,6 @@ fun TransactionAssignmentScreen(
                 }
             )
 
-            // Transaction List
             val displayTransactions = when (filterType) {
                 "unassigned" -> unassignedTransactions
                 "assigned"   -> assignedTransactions
@@ -154,14 +201,17 @@ fun TransactionAssignmentScreen(
                 ) {
                     items(displayTransactions, key = { it.id }) { transaction ->
                         val isUnassigned = transaction.role == TransactionRole.UNASSIGNED
-                        val missingCsa = transaction.role.requiresCsa() && transaction.assigned_to.isNullOrBlank()
+                        val missingCsa = transaction.role.requiresCsa() &&
+                                transaction.assigned_to.isNullOrBlank()
                         val needsAttention = isUnassigned || missingCsa
 
                         AssignableTransactionCard(
                             transaction = transaction,
                             isSelected = selectedTransactions.contains(transaction.id),
+                            isAssigning = isAssigning,
                             onToggleSelection = {
-                                if (needsAttention) {
+                                // Block selection while assignment is in progress
+                                if (!isAssigning && needsAttention) {
                                     selectedTransactions = if (selectedTransactions.contains(transaction.id)) {
                                         selectedTransactions - transaction.id
                                     } else {
@@ -170,8 +220,10 @@ fun TransactionAssignmentScreen(
                                 }
                             },
                             onEdit = {
-                                transactionToEdit = transaction
-                                showEditDialog = true
+                                if (!isAssigning) {
+                                    transactionToEdit = transaction
+                                    showEditDialog = true
+                                }
                             }
                         )
                     }
@@ -185,9 +237,8 @@ fun TransactionAssignmentScreen(
         AssignmentDialog(
             persons = persons,
             transactionCount = selectedTransactions.size,
-            onDismiss = {
-                showAssignDialog = false
-            },
+            isAssigning = isAssigning,
+            onDismiss = { showAssignDialog = false },
             onConfirm = { role, personName ->
                 viewModel.assignTransactions(
                     transactionIds = selectedTransactions.toList(),
@@ -227,9 +278,6 @@ fun TransactionAssignmentScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Summary Card
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignmentSummaryCard(
     totalUnassigned: Int,
@@ -299,9 +347,6 @@ fun AssignmentSummaryCard(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Filter Chips
-// ─────────────────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilterChips(
@@ -333,13 +378,11 @@ fun FilterChips(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Transaction Card
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignableTransactionCard(
     transaction: Transaction,
     isSelected: Boolean,
+    isAssigning: Boolean,
     onToggleSelection: () -> Unit,
     onEdit: () -> Unit
 ) {
@@ -351,9 +394,10 @@ fun AssignableTransactionCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = when {
-                isSelected      -> MaterialTheme.colorScheme.primaryContainer
-                needsAttention  -> MaterialTheme.colorScheme.surface
-                else            -> MaterialTheme.colorScheme.surfaceVariant
+                isAssigning && isSelected -> MaterialTheme.colorScheme.secondaryContainer
+                isSelected               -> MaterialTheme.colorScheme.primaryContainer
+                needsAttention           -> MaterialTheme.colorScheme.surface
+                else                     -> MaterialTheme.colorScheme.surfaceVariant
             }
         )
     ) {
@@ -363,11 +407,11 @@ fun AssignableTransactionCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Checkbox (for unassigned or missing CSA)
             if (needsAttention) {
                 Checkbox(
                     checked = isSelected,
-                    onCheckedChange = { onToggleSelection() }
+                    onCheckedChange = { onToggleSelection() },
+                    enabled = !isAssigning  // disabled while assigning
                 )
             } else {
                 Icon(
@@ -380,7 +424,6 @@ fun AssignableTransactionCard(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Transaction Details
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = transaction.sender_name ?: transaction.business_name ?: "Unknown",
@@ -400,11 +443,9 @@ fun AssignableTransactionCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
 
-                // Role + CSA badge
                 if (!isUnassigned) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        // Role badge
                         Surface(
                             color = MaterialTheme.colorScheme.secondaryContainer,
                             shape = MaterialTheme.shapes.small
@@ -415,7 +456,6 @@ fun AssignableTransactionCard(
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
-                        // CSA badge
                         if (!transaction.assigned_to.isNullOrBlank()) {
                             Surface(
                                 color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -432,7 +472,6 @@ fun AssignableTransactionCard(
                 }
             }
 
-            // Amount + direction + edit
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = formatAmount(transaction.amount),
@@ -449,7 +488,11 @@ fun AssignableTransactionCard(
                     )
                 )
                 if (!isUnassigned) {
-                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                    IconButton(
+                        onClick = onEdit,
+                        modifier = Modifier.size(32.dp),
+                        enabled = !isAssigning  // disabled while assigning
+                    ) {
                         Icon(
                             Icons.Default.Edit,
                             contentDescription = "Edit",
@@ -462,54 +505,26 @@ fun AssignableTransactionCard(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Flat assignment option — either a CSA name or a special role
-// ─────────────────────────────────────────────────────────────────────────────
 private sealed class AssignOption {
     data class Csa(val name: String) : AssignOption()
     data class Role(val role: TransactionRole) : AssignOption()
 }
 
-private fun AssignOption.label(): String = when (this) {
-    is AssignOption.Csa  -> name
-    is AssignOption.Role -> role.displayName()
-}
-
-private fun AssignOption.sublabel(): String = when (this) {
-    is AssignOption.Csa  -> "IN +"
-    is AssignOption.Role -> role.directionLabel()
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Batch Assignment Dialog — flat list: CSAs first, then special roles
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AssignmentDialog(
     persons: List<Person>,
     transactionCount: Int,
+    isAssigning: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (role: TransactionRole, personName: String?) -> Unit
 ) {
     var selected by remember { mutableStateOf<AssignOption?>(null) }
 
-    // Build flat list: active CSAs first, then special roles
-    val options: List<AssignOption> = persons
-        .filter { it.is_active }
-        .map { AssignOption.Csa(it.short_name) } +
-            listOf(
-                AssignOption.Role(TransactionRole.TILL_TRANSFER_OUT),
-                AssignOption.Role(TransactionRole.TILL_TRANSFER_IN),
-                AssignOption.Role(TransactionRole.WITHDRAWAL),
-                AssignOption.Role(TransactionRole.REVERSAL),
-                AssignOption.Role(TransactionRole.DUPLICATE)
-            )
-
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isAssigning) onDismiss() },
         title = { Text("Assign $transactionCount Transaction(s)") },
         text = {
             LazyColumn {
-                // CSA section header
                 item {
                     Text(
                         "CSA",
@@ -526,10 +541,10 @@ fun AssignmentDialog(
                         sublabel = "IN +",
                         sublabelColor = MaterialTheme.colorScheme.primary,
                         selected = selected == opt,
+                        enabled = !isAssigning,
                         onClick = { selected = opt }
                     )
                 }
-                // Special roles section header
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Text(
@@ -540,13 +555,15 @@ fun AssignmentDialog(
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
-                items(listOf(
-                    TransactionRole.TILL_TRANSFER_OUT,
-                    TransactionRole.TILL_TRANSFER_IN,
-                    TransactionRole.WITHDRAWAL,
-                    TransactionRole.REVERSAL,
-                    TransactionRole.DUPLICATE
-                )) { role ->
+                items(
+                    listOf(
+                        TransactionRole.TILL_TRANSFER_OUT,
+                        TransactionRole.TILL_TRANSFER_IN,
+                        TransactionRole.WITHDRAWAL,
+                        TransactionRole.REVERSAL,
+                        TransactionRole.DUPLICATE
+                    )
+                ) { role ->
                     val opt = AssignOption.Role(role)
                     FlatOptionRow(
                         label = role.displayName(),
@@ -558,6 +575,7 @@ fun AssignmentDialog(
                         else
                             MaterialTheme.colorScheme.outline,
                         selected = selected == opt,
+                        enabled = !isAssigning,
                         onClick = { selected = opt }
                     )
                 }
@@ -572,20 +590,29 @@ fun AssignmentDialog(
                         null -> {}
                     }
                 },
-                enabled = selected != null
+                // Disabled while assigning or nothing selected
+                enabled = selected != null && !isAssigning
             ) {
-                Text("Assign")
+                if (isAssigning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (isAssigning) "Saving..." else "Assign")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isAssigning
+            ) { Text("Cancel") }
         }
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Edit Assignment Dialog — same flat list, no pre-fill
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun EditAssignmentDialog(
     transaction: Transaction,
@@ -601,7 +628,6 @@ fun EditAssignmentDialog(
         title = { Text("Edit Assignment") },
         text = {
             Column {
-                // Transaction info card
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -630,7 +656,6 @@ fun EditAssignmentDialog(
                     }
                 }
 
-                // CSA section
                 Text(
                     "CSA",
                     style = MaterialTheme.typography.labelMedium,
@@ -645,11 +670,11 @@ fun EditAssignmentDialog(
                         sublabel = "IN +",
                         sublabelColor = MaterialTheme.colorScheme.primary,
                         selected = selected == opt,
+                        enabled = true,
                         onClick = { selected = opt }
                     )
                 }
 
-                // Special roles section
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
                     "Other",
@@ -676,6 +701,7 @@ fun EditAssignmentDialog(
                         else
                             MaterialTheme.colorScheme.outline,
                         selected = selected == opt,
+                        enabled = true,
                         onClick = { selected = opt }
                     )
                 }
@@ -688,9 +714,7 @@ fun EditAssignmentDialog(
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
                     )
-                ) {
-                    Text("Unassign")
-                }
+                ) { Text("Unassign") }
                 Button(
                     onClick = {
                         when (val s = selected) {
@@ -700,9 +724,7 @@ fun EditAssignmentDialog(
                         }
                     },
                     enabled = selected != null
-                ) {
-                    Text("Save")
-                }
+                ) { Text("Save") }
             }
         },
         dismissButton = {
@@ -711,41 +733,49 @@ fun EditAssignmentDialog(
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reusable flat option row
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun FlatOptionRow(
     label: String,
     sublabel: String,
     sublabelColor: androidx.compose.ui.graphics.Color,
     selected: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .selectable(selected = selected, onClick = onClick)
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                onClick = onClick
+            )
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = selected, onClick = onClick)
+            RadioButton(
+                selected = selected,
+                onClick = onClick,
+                enabled = enabled
+            )
             Spacer(modifier = Modifier.width(8.dp))
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+            )
         }
         Text(
             text = sublabel,
             style = MaterialTheme.typography.labelSmall,
-            color = sublabelColor
+            color = if (enabled) sublabelColor else sublabelColor.copy(alpha = 0.4f)
         )
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared composables
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun NoActiveShiftMessage() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -778,6 +808,5 @@ fun EmptyTransactionsMessage(filterType: String) {
     }
 }
 
-private fun formatAmount(amount: Double): String {
-    return "Ksh ${String.format("%,.0f", amount)}"
-}
+private fun formatAmount(amount: Double): String =
+    "Ksh ${String.format("%,.0f", amount)}"

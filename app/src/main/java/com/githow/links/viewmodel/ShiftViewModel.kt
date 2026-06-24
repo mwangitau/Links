@@ -54,6 +54,13 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncStatus = MutableLiveData<String?>()
     val syncStatus: LiveData<String?> = _syncStatus
 
+    // ── Double-assignment guard ───────────────────────────────────────────────
+    // Prevents a second tap from triggering a duplicate assignment while the
+    // first one is still being written to Room. The UI observes this and
+    // disables the Assign button + FAB while true.
+    private val _isAssigning = MutableLiveData<Boolean>(false)
+    val isAssigning: LiveData<Boolean> = _isAssigning
+
     private val TAG = "ShiftViewModel"
 
     init {
@@ -145,8 +152,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                 val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
 
-                // ── Reconciliation using role direction ───────────────────────
-
                 // Money OUT of the float — every OUT direction transaction
                 val transfersOut = shiftTransactions
                     .filter { it.direction == TransactionDirection.OUT }
@@ -172,13 +177,11 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("SHIFT_CLOSE", "Variance         : Ksh $variance")
                 Log.d("SHIFT_CLOSE", "════════════════════════════════════")
 
-                // Transaction breakdown by role for audit
                 val byRole = shiftTransactions.groupBy { it.role }
                 byRole.forEach { (role, txns) ->
                     Log.d("SHIFT_CLOSE", "  $role: ${txns.size} txns, Ksh ${txns.sumOf { it.amount }}")
                 }
 
-                // Cutoff timestamp
                 val closingBalanceTransaction = shiftTransactions
                     .filter { abs(it.account_balance - closingBalance) < 0.01 }
                     .maxByOrNull { it.timestamp }
@@ -200,7 +203,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     updatedAt = System.currentTimeMillis()
                 )
 
-                // Cloud sync
                 _syncStatus.value = "Syncing to cloud..."
                 val updatedShift = shiftDao.getShiftByIdDirect(shiftId)
                 if (updatedShift != null) {
@@ -251,7 +253,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                     val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
 
-                    // Same role-based formula
                     val transfersOut = shiftTransactions
                         .filter { it.direction == TransactionDirection.OUT }
                         .sumOf { it.amount }
@@ -312,7 +313,19 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============ ASSIGNMENT ============
 
+    /**
+     * Assign transactions with double-assignment guard.
+     * If an assignment is already in progress, the second call is silently
+     * dropped — the UI button is also disabled while _isAssigning == true
+     * so this is a belt-and-suspenders safety net.
+     */
     fun assignTransactions(transactionIds: List<Long>, personName: String, role: TransactionRole) {
+        if (_isAssigning.value == true) {
+            Log.w(TAG, "⚠️ Assignment already in progress — ignoring duplicate tap")
+            return
+        }
+        _isAssigning.value = true
+
         viewModelScope.launch {
             try {
                 transactionIds.forEach { id ->
@@ -338,17 +351,20 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e(TAG, "Error assigning transactions", e)
                 _errorMessage.value = "Error assigning transactions: ${e.message}"
+            } finally {
+                // Always release the lock — even if something went wrong
+                _isAssigning.value = false
             }
         }
     }
 
     fun assignTransactions(transactionIds: List<Long>, personName: String, category: String) {
         val role = when (category) {
-            "CSA"          -> TransactionRole.CUSTOMER_RECEIPT
-            "TRANSFER_IN"  -> TransactionRole.TILL_TRANSFER_IN
-            "NEUTRAL"      -> TransactionRole.WITHDRAWAL
-            "DUPLICATE"    -> TransactionRole.DUPLICATE
-            else           -> TransactionRole.CUSTOMER_RECEIPT
+            "CSA"         -> TransactionRole.CUSTOMER_RECEIPT
+            "TRANSFER_IN" -> TransactionRole.TILL_TRANSFER_IN
+            "NEUTRAL"     -> TransactionRole.WITHDRAWAL
+            "DUPLICATE"   -> TransactionRole.DUPLICATE
+            else          -> TransactionRole.CUSTOMER_RECEIPT
         }
         assignTransactions(transactionIds, personName, role)
     }
@@ -360,6 +376,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         onComplete: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (_isAssigning.value == true) {
+            Log.w(TAG, "⚠️ Assignment already in progress — ignoring bulk assign tap")
+            return
+        }
+        _isAssigning.value = true
+
         viewModelScope.launch {
             try {
                 val allTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
@@ -391,6 +413,8 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Bulk assign failed: ${e.message}", e)
                 onError(e.message ?: "Unknown error")
+            } finally {
+                _isAssigning.value = false
             }
         }
     }
@@ -399,10 +423,10 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val role = when (newCategory) {
-                    "TRANSFER_IN"  -> TransactionRole.TILL_TRANSFER_IN
-                    "NEUTRAL"      -> TransactionRole.WITHDRAWAL
-                    "DUPLICATE"    -> TransactionRole.DUPLICATE
-                    else           -> TransactionRole.CUSTOMER_RECEIPT
+                    "TRANSFER_IN" -> TransactionRole.TILL_TRANSFER_IN
+                    "NEUTRAL"     -> TransactionRole.WITHDRAWAL
+                    "DUPLICATE"   -> TransactionRole.DUPLICATE
+                    else          -> TransactionRole.CUSTOMER_RECEIPT
                 }
                 transactionDao.assignTransactionWithRole(
                     transactionId = transactionId,

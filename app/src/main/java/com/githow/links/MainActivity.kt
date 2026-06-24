@@ -19,8 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -44,9 +44,10 @@ import com.githow.links.ui.screens.TransactionAssignmentScreen
 import com.githow.links.ui.screens.TransactionListScreen
 import com.githow.links.ui.screens.UnparsedSmsScreen
 import com.githow.links.data.database.LinksDatabase
+import com.githow.links.sync.CloudSyncManager
+import com.githow.links.sync.SyncResult
 import com.githow.links.viewmodel.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -251,7 +252,7 @@ fun MainScreen() {
                 Screen.UNPARSED_SMS -> UnparsedSmsScreen(
                     viewModel = unparsedSmsViewModel,
                     onNavigateBack = { currentScreen = Screen.SMS },
-                    onManualEntry = { rawSmsId ->
+                    onManualEntry = {
                         selectedTab = 2
                         currentScreen = Screen.MANUAL_REVIEW
                     }
@@ -315,11 +316,9 @@ fun SettingsScreen() {
     var showError by remember { mutableStateOf(false) }
     var isSyncing by remember { mutableStateOf(false) }
     var syncMessage by remember { mutableStateOf<String?>(null) }
+    var cachedUuid by remember { mutableStateOf(StationConfig.getCachedUuid(context)) }
 
     val isConfigured = StationConfig.isConfigured(context)
-
-    // Refresh cached UUID display whenever screen recomposes
-    var cachedUuid by remember { mutableStateOf(StationConfig.getCachedUuid(context)) }
 
     Scaffold(
         topBar = {
@@ -501,7 +500,7 @@ fun SettingsScreen() {
             )
             Spacer(Modifier.height(8.dp))
 
-            // UUID status
+            // UUID status card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -524,39 +523,97 @@ fun SettingsScreen() {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         if (cachedUuid.isNotBlank()) cachedUuid
-                        else "Save station config then tap Sync Now — the UUID will be resolved automatically from Supabase",
+                        else "Save station config then tap Sync Now — UUID will be resolved from Supabase automatically",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                "The station_code must match a row in the Supabase stations table. " +
-                        "Add new stations via Supabase SQL Editor before syncing.",
+                "The station_code must match a row in the Supabase stations table.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(Modifier.height(16.dp))
 
-            // ── Sync Now Button ──────────────────────────────────────────────
+            // ── Sync Now Button — runs directly, bypasses WorkManager ────────
+            // WorkManager network constraints are unreliable on Unisoc/SPRD ROMs
             Button(
                 onClick = {
                     isSyncing = true
                     syncMessage = null
                     scope.launch {
                         try {
-                            // Schedule an immediate one-time sync worker
-                            SupabaseSyncWorker.scheduleRetry(context)
-                            // Give it a moment to register
-                            delay(2000)
-                            // Refresh UUID display in case it was just resolved
+                            val db = LinksDatabase.getDatabase(context)
+                            val rawSmsDao = db.rawSmsDao()
+                            val transactionDao = db.transactionDao()
+                            val syncManager = CloudSyncManager(context)
+
+                            // Fetch unsynced records
+                            val unsyncedSms = withContext(Dispatchers.IO) {
+                                rawSmsDao.getUnsyncedSms(limit = 50)
+                            }
+                            val unsyncedTxns = withContext(Dispatchers.IO) {
+                                transactionDao.getUnsyncedTransactions(limit = 100)
+                            }
+
+                            var smsSynced = 0
+                            var txnSynced = 0
+                            var failed = 0
+
+                            // Push unsynced raw SMS
+                            withContext(Dispatchers.IO) {
+                                for (sms in unsyncedSms) {
+                                    when (val result = syncManager.backupRawSms(sms)) {
+                                        is SyncResult.Success -> {
+                                            rawSmsDao.markAsSynced(sms.id)
+                                            smsSynced++
+                                        }
+                                        is SyncResult.Failure -> {
+                                            Log.e("SYNC", "SMS ${sms.id} failed: ${result.error}")
+                                            failed++
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Push unsynced transactions
+                            withContext(Dispatchers.IO) {
+                                for (txn in unsyncedTxns) {
+                                    when (val result = syncManager.backupAssignedTransaction(txn)) {
+                                        is SyncResult.Success -> {
+                                            transactionDao.markTransactionSynced(txn.id)
+                                            txnSynced++
+                                        }
+                                        is SyncResult.Failure -> {
+                                            Log.e("SYNC", "Txn ${txn.mpesa_code} failed: ${result.error}")
+                                            failed++
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Refresh UUID display — will now show resolved UUID
+                            // if this was the first successful sync
                             cachedUuid = StationConfig.getCachedUuid(context)
-                            syncMessage = "✅ Sync triggered — all unsynced records will push to Supabase shortly. Check the UUID field above — if it resolved, your station is connected."
+
+                            syncMessage = when {
+                                failed > 0 && smsSynced == 0 && txnSynced == 0 ->
+                                    "❌ Sync failed — check internet and station config. Is station code EXACTLY '$stationCode' in Supabase?"
+                                failed > 0 ->
+                                    "⚠️ Partial — SMS: $smsSynced ✅, Transactions: $txnSynced ✅, Failed: $failed ❌"
+                                smsSynced == 0 && txnSynced == 0 ->
+                                    "✅ Nothing to sync — all records already up to date"
+                                else ->
+                                    "✅ Sync complete — SMS: $smsSynced, Transactions: $txnSynced pushed to Supabase"
+                            }
+
                         } catch (e: Exception) {
-                            syncMessage = "❌ Failed to trigger sync: ${e.message}"
+                            Log.e("SYNC", "Direct sync error: ${e.message}", e)
+                            syncMessage = "❌ Sync error: ${e.message}"
                         } finally {
                             isSyncing = false
                         }
@@ -578,7 +635,7 @@ fun SettingsScreen() {
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (isSyncing) "Triggering Sync..." else "☁️ Sync Now")
+                Text(if (isSyncing) "Syncing..." else "☁️ Sync Now")
             }
 
             // Sync result message
@@ -586,10 +643,11 @@ fun SettingsScreen() {
                 Spacer(Modifier.height(12.dp))
                 Card(
                     colors = CardDefaults.cardColors(
-                        containerColor = if (message.startsWith("✅"))
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.errorContainer
+                        containerColor = when {
+                            message.startsWith("✅") -> MaterialTheme.colorScheme.primaryContainer
+                            message.startsWith("⚠️") -> MaterialTheme.colorScheme.tertiaryContainer
+                            else -> MaterialTheme.colorScheme.errorContainer
+                        }
                     )
                 ) {
                     Text(

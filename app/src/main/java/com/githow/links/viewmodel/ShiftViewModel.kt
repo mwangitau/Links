@@ -118,7 +118,26 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun closeShift(shiftId: Long, closingBalance: Double, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    /**
+     * Close shift with ROLE-BASED reconciliation formula:
+     *
+     * Transfers Out     = SUM of all transactions where direction == OUT
+     *                     (TILL_TRANSFER_OUT + WITHDRAWAL + REVERSAL)
+     *
+     * Customer Receipts = SUM of all transactions where direction == IN
+     *                     (CUSTOMER_RECEIPT + TILL_TRANSFER_IN)
+     *
+     * Expected Float    = Closing Balance − Opening Balance + Transfers Out
+     * Variance          = Expected Float − Customer Receipts
+     *
+     * DUPLICATE and UNASSIGNED are excluded from both sides entirely.
+     */
+    fun closeShift(
+        shiftId: Long,
+        closingBalance: Double,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
         viewModelScope.launch {
             try {
                 val shift = shiftDao.getShiftByIdDirect(shiftId)
@@ -126,6 +145,40 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
                 val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
 
+                // ── Reconciliation using role direction ───────────────────────
+
+                // Money OUT of the float — every OUT direction transaction
+                val transfersOut = shiftTransactions
+                    .filter { it.direction == TransactionDirection.OUT }
+                    .sumOf { it.amount }
+
+                // Money IN to the float — every IN direction transaction
+                val customerReceipts = shiftTransactions
+                    .filter { it.direction == TransactionDirection.IN }
+                    .sumOf { it.amount }
+
+                // Core formula
+                val netChange = closingBalance - shift.open_balance
+                val expectedFloat = netChange + transfersOut
+                val variance = expectedFloat - customerReceipts
+
+                Log.d("SHIFT_CLOSE", "════════════════════════════════════")
+                Log.d("SHIFT_CLOSE", "Opening Balance  : Ksh ${shift.open_balance}")
+                Log.d("SHIFT_CLOSE", "Closing Balance  : Ksh $closingBalance")
+                Log.d("SHIFT_CLOSE", "Net Change       : Ksh $netChange")
+                Log.d("SHIFT_CLOSE", "Transfers Out    : Ksh $transfersOut")
+                Log.d("SHIFT_CLOSE", "Expected Float   : Ksh $expectedFloat")
+                Log.d("SHIFT_CLOSE", "Customer Receipts: Ksh $customerReceipts")
+                Log.d("SHIFT_CLOSE", "Variance         : Ksh $variance")
+                Log.d("SHIFT_CLOSE", "════════════════════════════════════")
+
+                // Transaction breakdown by role for audit
+                val byRole = shiftTransactions.groupBy { it.role }
+                byRole.forEach { (role, txns) ->
+                    Log.d("SHIFT_CLOSE", "  $role: ${txns.size} txns, Ksh ${txns.sumOf { it.amount }}")
+                }
+
+                // Cutoff timestamp
                 val closingBalanceTransaction = shiftTransactions
                     .filter { abs(it.account_balance - closingBalance) < 0.01 }
                     .maxByOrNull { it.timestamp }
@@ -134,46 +187,40 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     ?: (shiftTransactions.maxByOrNull { it.timestamp }?.timestamp?.plus(1000)
                         ?: System.currentTimeMillis())
 
-                val netChange = closingBalance - shift.open_balance
-                val moneySentOut = shiftTransactions
-                    .filter { it.transaction_type == "SENT" }
-                    .sumOf { abs(it.amount) }
-                val expectedReceipts = netChange + moneySentOut
-                val actualReceipts = shiftTransactions
-                    .filter { it.transaction_type == "RECEIVED" }
-                    .sumOf { it.amount }
-                val variance = expectedReceipts - actualReceipts
-
-                Log.d("SHIFT_CLOSE", "Opening: ${shift.open_balance} | Closing: $closingBalance | Net: $netChange | SentOut: $moneySentOut | Expected: $expectedReceipts | Actual: $actualReceipts | Variance: $variance")
-
                 shiftDao.closeShiftWithReconciliation(
                     shiftId = shiftId,
                     endTime = System.currentTimeMillis(),
                     closeBalance = closingBalance,
                     cutoffTimestamp = cutoffTime,
                     netChange = netChange,
-                    moneySentOut = moneySentOut,
-                    expectedReceipts = expectedReceipts,
-                    actualReceipts = actualReceipts,
+                    moneySentOut = transfersOut,
+                    expectedReceipts = expectedFloat,
+                    actualReceipts = customerReceipts,
                     variance = variance,
                     updatedAt = System.currentTimeMillis()
                 )
 
+                // Cloud sync
                 _syncStatus.value = "Syncing to cloud..."
                 val updatedShift = shiftDao.getShiftByIdDirect(shiftId)
                 if (updatedShift != null) {
                     val derivedAssignments = shiftTransactions
                         .filter { !it.assigned_to.isNullOrBlank() && it.assigned_to != "Neutral" }
                         .groupBy { it.assigned_to!! }
-                        .map { (personName, _) -> ShiftAssignment(shift_id = shiftId, person_name = personName, role = "CSA") }
+                        .map { (personName, _) ->
+                            ShiftAssignment(shift_id = shiftId, person_name = personName, role = "CSA")
+                        }
 
-                    when (val syncResult = cloudSyncManager.syncShiftToCloud(updatedShift, shiftTransactions, derivedAssignments)) {
+                    when (val syncResult = cloudSyncManager.syncShiftToCloud(
+                        updatedShift, shiftTransactions, derivedAssignments
+                    )) {
                         is SyncResult.Success -> _syncStatus.value = "✅ Synced to cloud"
                         is SyncResult.Failure -> _syncStatus.value = "⚠️ Sync failed: ${syncResult.error}"
                     }
                 }
 
                 onSuccess()
+
             } catch (e: Exception) {
                 Log.e("SHIFT_CLOSE", "❌ Error closing shift: ${e.message}", e)
                 onError(e.message ?: "Unknown error")
@@ -181,7 +228,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateClosingBalance(shiftId: Long, newClosingBalance: Double, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    fun updateClosingBalance(
+        shiftId: Long,
+        newClosingBalance: Double,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -191,21 +243,32 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                         return@withContext
                     }
                     if (shift.status != "CLOSED") {
-                        withContext(Dispatchers.Main) { onError("Can only update closing balance for closed shifts") }
+                        withContext(Dispatchers.Main) {
+                            onError("Can only update closing balance for closed shifts")
+                        }
                         return@withContext
                     }
+
                     val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+
+                    // Same role-based formula
+                    val transfersOut = shiftTransactions
+                        .filter { it.direction == TransactionDirection.OUT }
+                        .sumOf { it.amount }
+
+                    val customerReceipts = shiftTransactions
+                        .filter { it.direction == TransactionDirection.IN }
+                        .sumOf { it.amount }
+
                     val netChange = newClosingBalance - shift.open_balance
-                    val moneySentOut = shiftTransactions.filter { it.transaction_type == "SENT" }.sumOf { abs(it.amount) }
-                    val expectedReceipts = netChange + moneySentOut
-                    val actualReceipts = shiftTransactions.filter { it.transaction_type == "RECEIVED" }.sumOf { it.amount }
-                    val variance = expectedReceipts - actualReceipts
+                    val expectedFloat = netChange + transfersOut
+                    val variance = expectedFloat - customerReceipts
 
                     shiftDao.updateClosingBalanceAndReconciliation(
                         shiftId = shiftId,
                         closeBalance = newClosingBalance,
                         netChange = netChange,
-                        expectedReceipts = expectedReceipts,
+                        expectedReceipts = expectedFloat,
                         variance = variance,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -228,9 +291,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val transactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
-                // FIX: filter by role, not assigned_to — OUT roles have no CSA name but are assigned
-                _unassignedTransactions.value = transactions.filter { it.role == TransactionRole.UNASSIGNED }
-                _assignedTransactions.value  = transactions.filter { it.role != TransactionRole.UNASSIGNED }
+                _unassignedTransactions.value = transactions.filter {
+                    it.role == TransactionRole.UNASSIGNED
+                }
+                _assignedTransactions.value = transactions.filter {
+                    it.role != TransactionRole.UNASSIGNED
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading transactions", e)
                 _errorMessage.value = "Error loading transactions: ${e.message}"
@@ -246,10 +312,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
     // ============ ASSIGNMENT ============
 
-    /**
-     * Main assignment entry point — always uses assignTransactionWithRole
-     * so that role, direction, and included_in_reconciliation are all written correctly.
-     */
     fun assignTransactions(transactionIds: List<Long>, personName: String, role: TransactionRole) {
         viewModelScope.launch {
             try {
@@ -280,7 +342,6 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Legacy string overload kept for any callers that pass a category string directly
     fun assignTransactions(transactionIds: List<Long>, personName: String, category: String) {
         val role = when (category) {
             "CSA"          -> TransactionRole.CUSTOMER_RECEIPT
@@ -411,7 +472,13 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val person = personDao.getPersonById(personId) ?: return@launch
                 val displayName = if (fullName.isNotEmpty()) "$shortName ($fullName)" else shortName
-                personDao.updatePerson(person.copy(name = fullName, short_name = displayName, updated_at = System.currentTimeMillis()))
+                personDao.updatePerson(
+                    person.copy(
+                        name = fullName,
+                        short_name = displayName,
+                        updated_at = System.currentTimeMillis()
+                    )
+                )
                 Log.d(TAG, "✅ Updated person: $displayName")
             } catch (e: Exception) {
                 Log.e(TAG, "Error updating person", e)

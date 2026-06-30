@@ -17,7 +17,9 @@ import androidx.compose.ui.unit.sp
 import com.githow.links.data.database.LinksDatabase
 import com.githow.links.data.entity.TransactionDirection
 import com.githow.links.data.entity.TransactionRole
+import com.githow.links.utils.ShiftPdfExporter
 import com.githow.links.viewmodel.ShiftViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -30,6 +32,7 @@ fun ShiftReportScreen(
 ) {
     val context = LocalContext.current
     val database = remember { LinksDatabase.getDatabase(context) }
+    val scope = rememberCoroutineScope()
 
     val shift by database.shiftDao().getShiftByIdLive(shiftId).observeAsState()
     val shiftTransactions by database.transactionDao()
@@ -39,6 +42,8 @@ fun ShiftReportScreen(
     val breakdown = remember(shiftTransactions) {
         calculateBreakdown(shiftTransactions, persons)
     }
+
+    var isExporting by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -50,8 +55,30 @@ fun ShiftReportScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { /* TODO: Share/Export */ }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share")
+                    if (isExporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp).padding(end = 8.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        IconButton(
+                            onClick = {
+                                shift?.let { s ->
+                                    isExporting = true
+                                    scope.launch {
+                                        ShiftPdfExporter.exportAndShare(
+                                            context = context,
+                                            shift = s,
+                                            transactions = shiftTransactions,
+                                            stationName = "Shell Mangu Road"
+                                        )
+                                        isExporting = false
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = "Share PDF")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

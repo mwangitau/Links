@@ -147,10 +147,12 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
-                val shift = shiftDao.getShiftByIdDirect(shiftId)
-                if (shift == null) { onError("Shift not found"); return@launch }
+                val shift = withContext(Dispatchers.IO) { shiftDao.getShiftByIdDirect(shiftId) }
+                if (shift == null) { withContext(Dispatchers.Main) { onError("Shift not found") }; return@launch }
 
-                val shiftTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                val shiftTransactions = withContext(Dispatchers.IO) {
+                    transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                }
 
                 // Money OUT of the float — every OUT direction transaction
                 val transfersOut = shiftTransactions
@@ -190,21 +192,23 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     ?: (shiftTransactions.maxByOrNull { it.timestamp }?.timestamp?.plus(1000)
                         ?: System.currentTimeMillis())
 
-                shiftDao.closeShiftWithReconciliation(
-                    shiftId = shiftId,
-                    endTime = System.currentTimeMillis(),
-                    closeBalance = closingBalance,
-                    cutoffTimestamp = cutoffTime,
-                    netChange = netChange,
-                    moneySentOut = transfersOut,
-                    expectedReceipts = expectedFloat,
-                    actualReceipts = customerReceipts,
-                    variance = variance,
-                    updatedAt = System.currentTimeMillis()
-                )
+                withContext(Dispatchers.IO) {
+                    shiftDao.closeShiftWithReconciliation(
+                        shiftId = shiftId,
+                        endTime = System.currentTimeMillis(),
+                        closeBalance = closingBalance,
+                        cutoffTimestamp = cutoffTime,
+                        netChange = netChange,
+                        moneySentOut = transfersOut,
+                        expectedReceipts = expectedFloat,
+                        actualReceipts = customerReceipts,
+                        variance = variance,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                }
 
                 _syncStatus.value = "Syncing to cloud..."
-                val updatedShift = shiftDao.getShiftByIdDirect(shiftId)
+                val updatedShift = withContext(Dispatchers.IO) { shiftDao.getShiftByIdDirect(shiftId) }
                 if (updatedShift != null) {
                     val derivedAssignments = shiftTransactions
                         .filter { !it.assigned_to.isNullOrBlank() && it.assigned_to != "Neutral" }
@@ -213,15 +217,16 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                             ShiftAssignment(shift_id = shiftId, person_name = personName, role = "CSA")
                         }
 
-                    when (val syncResult = cloudSyncManager.syncShiftToCloud(
-                        updatedShift, shiftTransactions, derivedAssignments
-                    )) {
+                    val syncResult = withContext(Dispatchers.IO) {
+                        cloudSyncManager.syncShiftToCloud(updatedShift, shiftTransactions, derivedAssignments)
+                    }
+                    when (syncResult) {
                         is SyncResult.Success -> _syncStatus.value = "✅ Synced to cloud"
                         is SyncResult.Failure -> _syncStatus.value = "⚠️ Sync failed: ${syncResult.error}"
                     }
                 }
 
-                onSuccess()
+                withContext(Dispatchers.Main) { onSuccess() }
 
             } catch (e: Exception) {
                 Log.e("SHIFT_CLOSE", "❌ Error closing shift: ${e.message}", e)
@@ -291,7 +296,9 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadShiftTransactions(shiftId: Long) {
         viewModelScope.launch {
             try {
-                val transactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                val transactions = withContext(Dispatchers.IO) {
+                    transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                }
                 _unassignedTransactions.value = transactions.filter {
                     it.role == TransactionRole.UNASSIGNED
                 }
@@ -306,9 +313,11 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun assignUnassignedTransactionsToShift(shiftId: Long) {
-        transactionDao.getAllTransactions()
-            .filter { it.shift_id == null }
-            .forEach { transactionDao.updateTransaction(it.copy(shift_id = shiftId)) }
+        withContext(Dispatchers.IO) {
+            transactionDao.getAllTransactions()
+                .filter { it.shift_id == null }
+                .forEach { transactionDao.updateTransaction(it.copy(shift_id = shiftId)) }
+        }
     }
 
     // ============ ASSIGNMENT ============
@@ -328,22 +337,26 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                transactionIds.forEach { id ->
-                    transactionDao.assignTransactionWithRole(
-                        transactionId = id,
-                        personName = personName.ifBlank { null },
-                        role = role.name,
-                        direction = role.toDirection().name,
-                        includedInReconciliation = role.includedInReconciliation(),
-                        modifiedAt = System.currentTimeMillis()
-                    )
+                withContext(Dispatchers.IO) {
+                    transactionIds.forEach { id ->
+                        transactionDao.assignTransactionWithRole(
+                            transactionId = id,
+                            personName = personName.ifBlank { null },
+                            role = role.name,
+                            direction = role.toDirection().name,
+                            includedInReconciliation = role.includedInReconciliation(),
+                            modifiedAt = System.currentTimeMillis()
+                        )
+                    }
                 }
 
                 Log.d(TAG, "✅ Assigned ${transactionIds.size} transactions — role=$role, csa=${personName.ifBlank { "none" }}")
 
-                transactionIds.forEach { id ->
-                    val txn = transactionDao.getTransactionById(id)
-                    if (txn != null) cloudSyncManager.backupAssignedTransaction(txn)
+                withContext(Dispatchers.IO) {
+                    transactionIds.forEach { id ->
+                        val txn = transactionDao.getTransactionById(id)
+                        if (txn != null) cloudSyncManager.backupAssignedTransaction(txn)
+                    }
                 }
 
                 currentShift.value?.let { loadShiftTransactions(it.shift_id) }
@@ -384,31 +397,35 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                val allTransactions = transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                val allTransactions = withContext(Dispatchers.IO) {
+                    transactionDao.getTransactionsByShiftIdDirect(shiftId)
+                }
                 val unassigned = allTransactions.filter { it.role == TransactionRole.UNASSIGNED }
                 val total = unassigned.size
                 var assigned = 0
 
                 Log.d(TAG, "🔄 Bulk assigning $total transactions to $personName")
 
-                unassigned.chunked(100).forEach { batch ->
-                    batch.forEach { txn ->
-                        transactionDao.assignTransactionWithRole(
-                            transactionId = txn.id,
-                            personName = personName,
-                            role = TransactionRole.CUSTOMER_RECEIPT.name,
-                            direction = TransactionDirection.IN.name,
-                            includedInReconciliation = true,
-                            modifiedAt = System.currentTimeMillis()
-                        )
-                        assigned++
+                withContext(Dispatchers.IO) {
+                    unassigned.chunked(100).forEach { batch ->
+                        batch.forEach { txn ->
+                            transactionDao.assignTransactionWithRole(
+                                transactionId = txn.id,
+                                personName = personName,
+                                role = TransactionRole.CUSTOMER_RECEIPT.name,
+                                direction = TransactionDirection.IN.name,
+                                includedInReconciliation = true,
+                                modifiedAt = System.currentTimeMillis()
+                            )
+                            assigned++
+                        }
+                        withContext(Dispatchers.Main) { onProgress(assigned, total) }
                     }
-                    onProgress(assigned, total)
                 }
 
                 Log.d(TAG, "✅ Bulk assign complete: $assigned transactions to $personName")
                 loadShiftTransactions(shiftId)
-                onComplete()
+                withContext(Dispatchers.Main) { onComplete() }
 
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Bulk assign failed: ${e.message}", e)
@@ -428,20 +445,20 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
                     "DUPLICATE"   -> TransactionRole.DUPLICATE
                     else          -> TransactionRole.CUSTOMER_RECEIPT
                 }
-                transactionDao.assignTransactionWithRole(
-                    transactionId = transactionId,
-                    personName = newPersonName.ifBlank { null },
-                    role = role.name,
-                    direction = role.toDirection().name,
-                    includedInReconciliation = role.includedInReconciliation(),
-                    modifiedAt = System.currentTimeMillis()
-                )
-
-                val txn = transactionDao.getTransactionById(transactionId)
-                if (txn != null) cloudSyncManager.backupAssignedTransaction(txn)
+                withContext(Dispatchers.IO) {
+                    transactionDao.assignTransactionWithRole(
+                        transactionId = transactionId,
+                        personName = newPersonName.ifBlank { null },
+                        role = role.name,
+                        direction = role.toDirection().name,
+                        includedInReconciliation = role.includedInReconciliation(),
+                        modifiedAt = System.currentTimeMillis()
+                    )
+                    val txn = transactionDao.getTransactionById(transactionId)
+                    if (txn != null) cloudSyncManager.backupAssignedTransaction(txn)
+                }
 
                 currentShift.value?.let { loadShiftTransactions(it.shift_id) }
-
                 Log.d(TAG, "✅ Reassigned transaction $transactionId to $newPersonName ($role)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error reassigning transaction", e)
@@ -453,14 +470,16 @@ class ShiftViewModel(application: Application) : AndroidViewModel(application) {
     fun unassignTransaction(transactionId: Long) {
         viewModelScope.launch {
             try {
-                transactionDao.assignTransactionWithRole(
-                    transactionId = transactionId,
-                    personName = null,
-                    role = TransactionRole.UNASSIGNED.name,
-                    direction = TransactionDirection.NONE.name,
-                    includedInReconciliation = false,
-                    modifiedAt = System.currentTimeMillis()
-                )
+                withContext(Dispatchers.IO) {
+                    transactionDao.assignTransactionWithRole(
+                        transactionId = transactionId,
+                        personName = null,
+                        role = TransactionRole.UNASSIGNED.name,
+                        direction = TransactionDirection.NONE.name,
+                        includedInReconciliation = false,
+                        modifiedAt = System.currentTimeMillis()
+                    )
+                }
                 currentShift.value?.let { loadShiftTransactions(it.shift_id) }
                 Log.d(TAG, "✅ Unassigned transaction $transactionId")
             } catch (e: Exception) {

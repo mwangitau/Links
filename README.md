@@ -1,6 +1,6 @@
 # LINKS — M-PESA Transaction Manager
 
-> **L**edger & **I**ntelligent **N**etwork for **K**iryan **S**tations  
+> **L**edger & **I**ntelligent **N**etwork for **K**enyan **S**tations  
 > Built for Kiryan Energy Ltd petrol stations, Kenya 🇰🇪  
 > Operated by **Kiryan Energy Ltd**
 

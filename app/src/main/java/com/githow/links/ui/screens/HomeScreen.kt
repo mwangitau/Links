@@ -280,33 +280,6 @@ fun HomeScreen(
         )
 
         Spacer(modifier = Modifier.height(24.dp))
-
-        // App Info
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "LINKS v3.0",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Features:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text("• Automatic M-PESA SMS parsing", style = MaterialTheme.typography.bodySmall)
-                Text("• Shift-based transaction management", style = MaterialTheme.typography.bodySmall)
-                Text("• CSA assignment and tracking", style = MaterialTheme.typography.bodySmall)
-                Text("• Manual review for failed parses", style = MaterialTheme.typography.bodySmall)
-                Text("• Cloud sync with Google Sheets", style = MaterialTheme.typography.bodySmall)
-            }
-        }
     }
 }
 

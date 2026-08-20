@@ -20,6 +20,7 @@ import com.githow.links.data.entity.Transaction
 import com.githow.links.data.entity.TransactionDirection
 import com.githow.links.data.entity.TransactionRole
 import com.githow.links.data.entity.requiresCsa
+import com.githow.links.ui.components.SupervisorPasswordDialog
 import com.githow.links.viewmodel.ShiftViewModel
 
 private fun TransactionRole.displayName(): String = when (this) {
@@ -73,6 +74,10 @@ fun TransactionAssignmentScreen(
     var showAssignDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var transactionToEdit by remember { mutableStateOf<Transaction?>(null) }
+    // Unassigning requires supervisor password — this holds the transaction
+    // waiting on that confirmation, separate from the edit dialog state so
+    // the edit dialog can close immediately while the password prompt shows.
+    var pendingUnassignTransactionId by remember { mutableStateOf<Long?>(null) }
     var filterType by remember { mutableStateOf("unassigned") }
 
     Scaffold(
@@ -270,9 +275,28 @@ fun TransactionAssignmentScreen(
                 transactionToEdit = null
             },
             onUnassign = {
-                viewModel.unassignTransaction(transactionToEdit!!.id)
+                // Don't unassign immediately — close this dialog and require
+                // supervisor password confirmation first.
+                pendingUnassignTransactionId = transactionToEdit!!.id
                 showEditDialog = false
                 transactionToEdit = null
+            }
+        )
+    }
+
+    // Supervisor password confirmation, required before an unassign actually
+    // takes effect. Reuses the existing SupervisorPasswordDialog component
+    // (same one used elsewhere in the app, e.g. shift close).
+    if (pendingUnassignTransactionId != null) {
+        SupervisorPasswordDialog(
+            title = "Confirm Unassign",
+            message = "Enter supervisor password to unassign this transaction.",
+            onAuthenticated = { _ ->
+                viewModel.unassignTransaction(pendingUnassignTransactionId!!)
+                pendingUnassignTransactionId = null
+            },
+            onDismiss = {
+                pendingUnassignTransactionId = null
             }
         )
     }
@@ -810,3 +834,4 @@ fun EmptyTransactionsMessage(filterType: String) {
 
 private fun formatAmount(amount: Double): String =
     "Ksh ${String.format("%,.0f", amount)}"
+

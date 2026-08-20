@@ -38,6 +38,7 @@ import com.githow.links.ui.screens.OpenShiftScreen
 import com.githow.links.ui.screens.PersonManagementScreen
 import com.githow.links.ui.screens.ShiftDashboardScreen
 import com.githow.links.ui.screens.ShiftReportScreen
+import com.githow.links.ui.screens.ShiftSummaryScreen
 import com.githow.links.ui.screens.SmsScreen
 import com.githow.links.ui.screens.SupervisorSetupScreen
 import com.githow.links.ui.screens.TransactionAssignmentScreen
@@ -148,7 +149,8 @@ enum class Screen {
     ASSIGN_TRANSACTIONS,
     SHIFT_HISTORY,
     SHIFT_DETAILS,
-    MANAGE_PERSONS
+    MANAGE_PERSONS,
+    SHIFT_SUMMARY
 }
 
 @Composable
@@ -272,7 +274,7 @@ fun MainScreen() {
                     onNavigateToCloseShift = { currentScreen = Screen.CLOSE_SHIFT },
                     onNavigateToAssignTransactions = { currentScreen = Screen.ASSIGN_TRANSACTIONS },
                     onNavigateToManageCSAs = { currentScreen = Screen.MANAGE_PERSONS },
-                    onNavigateToShiftSummary = { currentScreen = Screen.HOME },
+                    onNavigateToShiftSummary = { currentScreen = Screen.SHIFT_SUMMARY },
                     onNavigateToHistory = { currentScreen = Screen.SHIFT_HISTORY }
                 )
                 Screen.ASSIGN_TRANSACTIONS -> TransactionAssignmentScreen(
@@ -293,6 +295,10 @@ fun MainScreen() {
                     onNavigateBack = { currentScreen = Screen.SHIFT_HISTORY }
                 )
                 Screen.MANAGE_PERSONS -> PersonManagementScreen(
+                    viewModel = shiftViewModel,
+                    onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
+                )
+                Screen.SHIFT_SUMMARY -> ShiftSummaryScreen(
                     viewModel = shiftViewModel,
                     onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
                 )

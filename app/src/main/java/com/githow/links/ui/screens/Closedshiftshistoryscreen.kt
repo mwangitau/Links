@@ -215,75 +215,17 @@ private fun ClosedShiftCard(
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
 
-            // Balance summary
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        "Opening",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        "KES ${numberFormat.format(shift.open_balance)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                shift.close_balance?.let { closeBalance ->
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "Closing",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "KES ${numberFormat.format(closeBalance)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            // Difference
-            shift.close_balance?.let { closeBalance ->
-                Spacer(Modifier.height(8.dp))
-                val difference = closeBalance - shift.open_balance
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (difference >= 0)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Difference:",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                        Text(
-                            "KES ${numberFormat.format(difference)}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (difference >= 0)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
+            // Full reconciliation summary — same card used on the Shift
+            // Report screen, so History and Report always show identical
+            // figures for a given shift.
+            ReconciliationCard(
+                openingBalance = shift.open_balance,
+                closingBalance = shift.close_balance ?: 0.0,
+                transfersOut = shift.money_sent_out,
+                expectedFloat = shift.expected_receipts,
+                customerReceipts = shift.actual_receipts,
+                variance = shift.variance
+            )
 
             // Tap to view hint
             Spacer(Modifier.height(8.dp))

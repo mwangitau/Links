@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
@@ -23,6 +24,7 @@ import java.util.*
 @Composable
 fun ShiftDashboardScreen(
     viewModel: ShiftViewModel,
+    onNavigateBack: () -> Unit = {},
     onNavigateToOpenShift: () -> Unit,
     onNavigateToCloseShift: () -> Unit,
     onNavigateToAssignTransactions: () -> Unit,
@@ -63,6 +65,11 @@ fun ShiftDashboardScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Shift Management") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )

@@ -70,7 +70,7 @@ fun ShiftReportScreen(
                                             context = context,
                                             shift = s,
                                             transactions = shiftTransactions,
-                                            stationName = "Shell Mangu Road"
+                                            stationName = com.githow.links.config.StationConfig.getStationName(context)
                                         )
                                         isExporting = false
                                     }

@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -23,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.githow.links.service.SmsForegroundService
@@ -153,6 +156,20 @@ enum class Screen {
     SHIFT_SUMMARY
 }
 
+/**
+ * Where the system back button / gesture should go from each screen.
+ * Mirrors the on-screen back arrows. null = let Android handle it
+ * (HOME exits the app; LOGIN / SETUP_SUPERVISOR are never bypassed).
+ */
+private fun backTarget(screen: Screen): Screen? = when (screen) {
+    Screen.LOGIN, Screen.SETUP_SUPERVISOR, Screen.HOME -> null
+    Screen.TRANSACTIONS, Screen.MANUAL_REVIEW, Screen.SMS, Screen.SETTINGS -> Screen.HOME
+    Screen.UNPARSED_SMS -> Screen.SMS
+    Screen.OPEN_SHIFT, Screen.CLOSE_SHIFT, Screen.SHIFT_DASHBOARD, Screen.SHIFT_HISTORY -> Screen.HOME
+    Screen.ASSIGN_TRANSACTIONS, Screen.MANAGE_PERSONS, Screen.SHIFT_SUMMARY -> Screen.SHIFT_DASHBOARD
+    Screen.SHIFT_DETAILS -> Screen.SHIFT_HISTORY
+}
+
 @Composable
 fun MainScreen() {
     var currentScreen by remember { mutableStateOf(Screen.LOGIN) }
@@ -168,143 +185,193 @@ fun MainScreen() {
     val shiftViewModel: ShiftViewModel = viewModel()
     val unparsedSmsViewModel: UnparsedSmsViewModel = viewModel()
 
-    Scaffold(
-        bottomBar = {
-            if (currentScreen in listOf(
-                    Screen.HOME, Screen.TRANSACTIONS, Screen.MANUAL_REVIEW,
-                    Screen.SMS, Screen.SETTINGS
-                ) && currentScreen != Screen.LOGIN
-            ) {
-                NavigationBar {
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Home, "Home") },
-                        label = { Text("Home") },
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0; currentScreen = Screen.HOME }
+    // System back button / gesture follows the same path as the on-screen arrows
+    BackHandler(enabled = backTarget(currentScreen) != null) {
+        backTarget(currentScreen)?.let { target ->
+            if (target == Screen.HOME) selectedTab = 0
+            currentScreen = target
+        }
+    }
+
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val pendingCount by manualReviewViewModel.pendingCount.collectAsState()
+    val isTopLevel = currentScreen in listOf(
+        Screen.HOME, Screen.TRANSACTIONS, Screen.MANUAL_REVIEW, Screen.SMS, Screen.SETTINGS
+    )
+
+    // Back closes the menu first if it is open (registered after the screen-back handler)
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+
+    fun goTo(tab: Int, screen: Screen) {
+        selectedTab = tab
+        currentScreen = screen
+        scope.launch { drawerState.close() }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        // Swipe-from-edge only on the main pages; never available on the PIN screen
+        gesturesEnabled = isTopLevel || drawerState.isOpen,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp)) {
+                    Text(
+                        "LINKS",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
                     )
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.List, "Transactions") },
-                        label = { Text("Transactions") },
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1; currentScreen = Screen.TRANSACTIONS }
-                    )
-                    NavigationBarItem(
-                        icon = {
-                            val pendingCount by manualReviewViewModel.pendingCount.collectAsState()
-                            BadgedBox(
-                                badge = {
-                                    if (pendingCount > 0) Badge { Text("$pendingCount") }
+                    val stationName = StationConfig.getStationName(context)
+                    if (stationName.isNotBlank()) {
+                        Text(
+                            stationName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                DrawerEntry("Home", selectedTab == 0, { Icon(Icons.Default.Home, null) }) {
+                    goTo(0, Screen.HOME)
+                }
+                DrawerEntry("Transactions", selectedTab == 1, { Icon(Icons.Default.List, null) }) {
+                    goTo(1, Screen.TRANSACTIONS)
+                }
+                DrawerEntry(
+                    "Review", selectedTab == 2, { Icon(Icons.Default.Warning, null) },
+                    badgeCount = pendingCount
+                ) {
+                    goTo(2, Screen.MANUAL_REVIEW)
+                }
+                DrawerEntry("SMS", selectedTab == 3, { Icon(Icons.Default.Email, null) }) {
+                    goTo(3, Screen.SMS)
+                }
+                DrawerEntry("Settings", selectedTab == 4, { Icon(Icons.Default.Settings, null) }) {
+                    goTo(4, Screen.SETTINGS)
+                }
+            }
+        }
+    ) {
+        Scaffold(
+            floatingActionButton = {
+                // Menu button only on the five main pages (never on the PIN screen)
+                if (isTopLevel) {
+                    SmallFloatingActionButton(
+                        onClick = { scope.launch { drawerState.open() } }
+                    ) {
+                        Icon(Icons.Default.Menu, contentDescription = "Open menu")
+                    }
+                }
+            }
+        ) { paddingValues ->
+            Box(modifier = Modifier.padding(paddingValues)) {
+                when (currentScreen) {
+                    Screen.LOGIN -> PinScreen(
+                        onAuthenticated = {
+                            scope.launch {
+                                val supervisorExists = withContext(Dispatchers.IO) {
+                                    LinksDatabase.getDatabase(context).userDao().supervisorExists()
                                 }
-                            ) {
-                                Icon(Icons.Default.Warning, "Review")
+                                currentScreen = if (supervisorExists) Screen.HOME else Screen.SETUP_SUPERVISOR
                             }
-                        },
-                        label = { Text("Review") },
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2; currentScreen = Screen.MANUAL_REVIEW }
+                        }
                     )
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Email, "SMS") },
-                        label = { Text("SMS") },
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3; currentScreen = Screen.SMS }
+                    Screen.SETUP_SUPERVISOR -> SupervisorSetupScreen(
+                        onSetupComplete = { currentScreen = Screen.HOME }
                     )
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Settings, "Settings") },
-                        label = { Text("Settings") },
-                        selected = selectedTab == 4,
-                        onClick = { selectedTab = 4; currentScreen = Screen.SETTINGS }
+                    Screen.HOME -> HomeScreen(
+                        onNavigateToOpenShift = { currentScreen = Screen.OPEN_SHIFT },
+                        onNavigateToCloseShift = { currentScreen = Screen.CLOSE_SHIFT },
+                        onNavigateToShiftDashboard = { currentScreen = Screen.SHIFT_DASHBOARD },
+                        onNavigateToAssignTransactions = { currentScreen = Screen.ASSIGN_TRANSACTIONS },
+                        onNavigateToShiftHistory = { currentScreen = Screen.SHIFT_HISTORY },
+                        onNavigateToSettings = { currentScreen = Screen.SETTINGS }
+                    )
+                    Screen.TRANSACTIONS -> TransactionListScreen(viewModel = transactionViewModel)
+                    Screen.MANUAL_REVIEW -> ManualReviewScreen(
+                        viewModel = manualReviewViewModel,
+                        onNavigateBack = { selectedTab = 0; currentScreen = Screen.HOME }
+                    )
+                    Screen.SMS -> SmsScreen(
+                        viewModel = smsViewModel,
+                        onNavigateToUnparsed = { currentScreen = Screen.UNPARSED_SMS }
+                    )
+                    Screen.UNPARSED_SMS -> UnparsedSmsScreen(
+                        viewModel = unparsedSmsViewModel,
+                        onNavigateBack = { currentScreen = Screen.SMS },
+                        onManualEntry = {
+                            selectedTab = 2
+                            currentScreen = Screen.MANUAL_REVIEW
+                        }
+                    )
+                    Screen.SETTINGS -> SettingsScreen()
+                    Screen.OPEN_SHIFT -> OpenShiftScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.HOME }
+                    )
+                    Screen.CLOSE_SHIFT -> CloseShiftScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.HOME }
+                    )
+                    Screen.SHIFT_DASHBOARD -> ShiftDashboardScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.HOME },
+                        onNavigateToOpenShift = { currentScreen = Screen.OPEN_SHIFT },
+                        onNavigateToCloseShift = { currentScreen = Screen.CLOSE_SHIFT },
+                        onNavigateToAssignTransactions = { currentScreen = Screen.ASSIGN_TRANSACTIONS },
+                        onNavigateToManageCSAs = { currentScreen = Screen.MANAGE_PERSONS },
+                        onNavigateToShiftSummary = { currentScreen = Screen.SHIFT_SUMMARY },
+                        onNavigateToHistory = { currentScreen = Screen.SHIFT_HISTORY }
+                    )
+                    Screen.ASSIGN_TRANSACTIONS -> TransactionAssignmentScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
+                    )
+                    Screen.SHIFT_HISTORY -> ClosedShiftsHistoryScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.HOME },
+                        onViewShiftDetails = { shiftId ->
+                            selectedShiftId = shiftId
+                            currentScreen = Screen.SHIFT_DETAILS
+                        }
+                    )
+                    Screen.SHIFT_DETAILS -> ShiftReportScreen(
+                        shiftId = selectedShiftId,
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.SHIFT_HISTORY }
+                    )
+                    Screen.MANAGE_PERSONS -> PersonManagementScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
+                    )
+                    Screen.SHIFT_SUMMARY -> ShiftSummaryScreen(
+                        viewModel = shiftViewModel,
+                        onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
                     )
                 }
             }
         }
-    ) { paddingValues ->
-        Box(modifier = Modifier.padding(paddingValues)) {
-            when (currentScreen) {
-                Screen.LOGIN -> PinScreen(
-                    onAuthenticated = {
-                        scope.launch {
-                            val supervisorExists = withContext(Dispatchers.IO) {
-                                LinksDatabase.getDatabase(context).userDao().supervisorExists()
-                            }
-                            currentScreen = if (supervisorExists) Screen.HOME else Screen.SETUP_SUPERVISOR
-                        }
-                    }
-                )
-                Screen.SETUP_SUPERVISOR -> SupervisorSetupScreen(
-                    onSetupComplete = { currentScreen = Screen.HOME }
-                )
-                Screen.HOME -> HomeScreen(
-                    onNavigateToOpenShift = { currentScreen = Screen.OPEN_SHIFT },
-                    onNavigateToCloseShift = { currentScreen = Screen.CLOSE_SHIFT },
-                    onNavigateToShiftDashboard = { currentScreen = Screen.SHIFT_DASHBOARD },
-                    onNavigateToAssignTransactions = { currentScreen = Screen.ASSIGN_TRANSACTIONS },
-                    onNavigateToShiftHistory = { currentScreen = Screen.SHIFT_HISTORY },
-                    onNavigateToSettings = { currentScreen = Screen.SETTINGS }
-                )
-                Screen.TRANSACTIONS -> TransactionListScreen(viewModel = transactionViewModel)
-                Screen.MANUAL_REVIEW -> ManualReviewScreen(
-                    viewModel = manualReviewViewModel,
-                    onNavigateBack = { selectedTab = 0; currentScreen = Screen.HOME }
-                )
-                Screen.SMS -> SmsScreen(
-                    viewModel = smsViewModel,
-                    onNavigateToUnparsed = { currentScreen = Screen.UNPARSED_SMS }
-                )
-                Screen.UNPARSED_SMS -> UnparsedSmsScreen(
-                    viewModel = unparsedSmsViewModel,
-                    onNavigateBack = { currentScreen = Screen.SMS },
-                    onManualEntry = {
-                        selectedTab = 2
-                        currentScreen = Screen.MANUAL_REVIEW
-                    }
-                )
-                Screen.SETTINGS -> SettingsScreen()
-                Screen.OPEN_SHIFT -> OpenShiftScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.HOME }
-                )
-                Screen.CLOSE_SHIFT -> CloseShiftScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.HOME }
-                )
-                Screen.SHIFT_DASHBOARD -> ShiftDashboardScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateToOpenShift = { currentScreen = Screen.OPEN_SHIFT },
-                    onNavigateToCloseShift = { currentScreen = Screen.CLOSE_SHIFT },
-                    onNavigateToAssignTransactions = { currentScreen = Screen.ASSIGN_TRANSACTIONS },
-                    onNavigateToManageCSAs = { currentScreen = Screen.MANAGE_PERSONS },
-                    onNavigateToShiftSummary = { currentScreen = Screen.SHIFT_SUMMARY },
-                    onNavigateToHistory = { currentScreen = Screen.SHIFT_HISTORY }
-                )
-                Screen.ASSIGN_TRANSACTIONS -> TransactionAssignmentScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
-                )
-                Screen.SHIFT_HISTORY -> ClosedShiftsHistoryScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.HOME },
-                    onViewShiftDetails = { shiftId ->
-                        selectedShiftId = shiftId
-                        currentScreen = Screen.SHIFT_DETAILS
-                    }
-                )
-                Screen.SHIFT_DETAILS -> ShiftReportScreen(
-                    shiftId = selectedShiftId,
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.SHIFT_HISTORY }
-                )
-                Screen.MANAGE_PERSONS -> PersonManagementScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
-                )
-                Screen.SHIFT_SUMMARY -> ShiftSummaryScreen(
-                    viewModel = shiftViewModel,
-                    onNavigateBack = { currentScreen = Screen.SHIFT_DASHBOARD }
-                )
-            }
-        }
     }
+}
+
+@Composable
+private fun DrawerEntry(
+    label: String,
+    selected: Boolean,
+    icon: @Composable () -> Unit,
+    badgeCount: Int = 0,
+    onClick: () -> Unit
+) {
+    NavigationDrawerItem(
+        icon = icon,
+        label = { Text(label) },
+        badge = { if (badgeCount > 0) Badge { Text("$badgeCount") } },
+        selected = selected,
+        onClick = onClick,
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
